@@ -39,3 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# test/debug scripts
+test-*.mjs
+scripts/
+
+# AI tool configs
+CLAUDE.md
+ContextForClaude.md
+NexHire_Project_Analysis.md
+.gemini/
