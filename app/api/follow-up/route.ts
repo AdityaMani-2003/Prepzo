@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { generateFollowUp } from "@/services/ai.service";
 import { generateEmbedding } from "@/lib/ai/gemini";
 import { createClient } from "@/lib/supabaseServer";
+import { pruneOldMessages, truncate } from "@/utils/pruneMessages";
 
 export async function POST(request: Request) {
   try {
@@ -68,8 +69,10 @@ export async function POST(request: Request) {
           session_id: session.id,
           user_id: user.id,
           type: "question",
-          content: result.follow_up_question
+          content: truncate(result.follow_up_question, 2000)
         });
+        // Prune oldest rows if user exceeds cap (non-blocking)
+        pruneOldMessages(supabase, user.id);
       }
     } catch (sessionErr) {
        console.error("Failed to map follow-up to active session:", sessionErr);

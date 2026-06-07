@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabaseServer";
 import { generateQuestion } from "@/services/ai.service";
+import { pruneOldMessages, truncate } from "@/utils/pruneMessages";
 
 export async function POST(request: Request) {
   try {
@@ -65,9 +66,11 @@ export async function POST(request: Request) {
           session_id: sessionData.id,
           user_id: user.id,
           type: "question",
-          content: result.question,
+          content: truncate(result.question, 2000),
           metadata: { difficulty: result.difficulty, topic: result.topic }
         });
+        // Prune oldest rows if user exceeds cap (non-blocking)
+        pruneOldMessages(supabase, user.id);
       }
     } catch (dbErr) {
       console.error("Failed to log architectural session structure:", dbErr);

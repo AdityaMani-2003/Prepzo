@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabaseServer";
 import { streamQuestion } from "@/services/ai.service";
+import { pruneOldMessages, truncate } from "@/utils/pruneMessages";
 
 export async function POST(request: Request) {
   try {
@@ -51,9 +52,11 @@ export async function POST(request: Request) {
               session_id: crypto.randomUUID(),
               user_id: user.id,
               type: "question",
-              content: completeText,
+              content: truncate(completeText, 2000),
               metadata: { difficulty: "hard", topic: role },
             });
+            // Prune oldest rows if user exceeds cap (non-blocking)
+            pruneOldMessages(supabase, user.id);
           }
         } catch (err: any) {
           console.error("[stream-question] ERROR:", err.message);

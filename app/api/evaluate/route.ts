@@ -3,6 +3,7 @@ import { evaluateAnswer } from "@/services/ai.service";
 import { generateEmbedding } from "@/lib/ai/gemini";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabaseServer";
+import { pruneOldMessages, truncate } from "@/utils/pruneMessages";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -58,13 +59,14 @@ export async function POST(request: Request) {
       session_id: virtualSessionId,
       user_id: user.id,
       type: "evaluation",
-      content: result.why_this_score || "Evaluation complete.",
+      content: truncate(result.why_this_score || "Evaluation complete.", 1000),
       score: avgScore || 5,
       metadata: {
         score_breakdown: result.score_breakdown,
         strengths: result.strengths,
         weaknesses: result.weaknesses,
-        improved_answer: result.improved_answer,
+        // Trim improved_answer — it can be 500+ words and is the biggest metadata field
+        improved_answer: truncate(result.improved_answer || "", 1000),
         topic: topic || "General",
       },
     })
@@ -72,6 +74,9 @@ export async function POST(request: Request) {
 
   if (insertErr) {
     console.error("[evaluate] Insert failed:", insertErr);
+  } else {
+    // Prune oldest rows if user exceeds cap (non-blocking)
+    pruneOldMessages(supabase, user.id);
   }
 
   revalidatePath("/progress");

@@ -12,15 +12,13 @@ export interface FeedbackData {
   improved_answer: string;
 }
 
+/**
+ * Saves skill metrics derived from an evaluation.
+ * Note: Raw feedback data is stored directly in interview_messages.metadata
+ * (type = 'evaluation') to avoid duplicating large text blobs in a separate table.
+ */
 export async function saveFeedback(data: FeedbackData, topic?: string) {
   const supabase = await createClient();
-
-  const { error } = await supabase.from("feedback").insert([data]);
-
-  if (error) {
-    console.error("[saveFeedback] Supabase insert error:", error);
-    // Note: We don't throw the error so that the API still returns the evaluation successfully even if saving fails.
-  }
 
   // Update skill_metrics table if a topic was provided
   if (topic) {
@@ -28,7 +26,7 @@ export async function saveFeedback(data: FeedbackData, topic?: string) {
       (data.clarity_score + data.technical_score + data.structure_score) / 3
     );
 
-    // First, check if a row already exists for this user and topic
+    // Check if a row already exists for this user and topic
     const { data: existingMetric } = await supabase
       .from("skill_metrics")
       .select("id")
