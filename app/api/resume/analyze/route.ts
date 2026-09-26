@@ -1,76 +1,55 @@
-import { NextResponse } from "next/server";
 import { callGemini } from "@/lib/ai/gemini";
+import { createClient } from "@/lib/supabaseServer";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function POST(request: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const { text, parsedText } = await request.json();
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
 
-    // Accept either "text" or "parsedText" as the field name
-    const resumeText = text || parsedText;
-
-    if (!resumeText || typeof resumeText !== "string") {
-      return NextResponse.json(
-        { error: "No resume text provided" },
-        { status: 400 }
-      );
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { text } = await req.json();
 
+    if (!text || typeof text !== "string" || text.trim().length === 0) {
+      return NextResponse.json({ error: "Resume text required" }, { status: 400 });
+    }
 
     const prompt = `
-You are an expert ATS resume analyzer.
+You are an expert technical recruiter and resume evaluator.
+Analyze this candidate resume:
+"""
+${text.substring(0, 4000)}
+"""
 
-Extract structured data from the resume.
-
-Return ONLY valid JSON. No explanation. No markdown.
-
-Format:
+Extract structured intelligence. Return ONLY valid JSON, no markdown formatting, no code fencing:
 {
-"skills": ["..."],
-"strengths": ["..."],
-"weaknesses": ["..."],
-"suggestions": ["..."]
+  "skills": ["Skill1", "Skill2", "Skill3"],
+  "suggestedRoles": ["Role 1", "Role 2"],
+  "summary": "2-3 sentence executive summary of the candidate's core strengths and technical domain",
+  "experienceLevel": "Junior" | "Mid-Level" | "Senior" | "Lead/Staff"
 }
-
-Rules:
-
-* skills: technologies, tools, languages
-* strengths: positive traits
-* weaknesses: missing areas or gaps
-* suggestions: actionable improvements
-
-Resume:
-${resumeText.substring(0, 8000)}
 `;
 
-    // Safely generate using retry wrapper
-    const rawText = await callGemini(prompt);
+    const aiResponse = await callGemini(prompt);
+    const cleaned = aiResponse.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
 
-
-    if (!rawText) {
-      throw new Error("Empty AI response from Gemini");
-    }
-
-    let parsed;
-    try {
-      let cleanText = rawText || "";
-      cleanText = cleanText.replace(/```json/g, "").replace(/```/g, "").trim();
-      parsed = JSON.parse(cleanText);
-    } catch (e) {
-      console.error("PARSE FAILED:", rawText);
-      throw new Error("Failed to parse evaluation response from AI.");
-    }
-
-    parsed.skills = Array.isArray(parsed.skills) ? parsed.skills : [];
-    parsed.strengths = Array.isArray(parsed.strengths) ? parsed.strengths : [];
-    parsed.weaknesses = Array.isArray(parsed.weaknesses) ? parsed.weaknesses : [];
-    parsed.suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
-
-    return NextResponse.json(parsed);
+    return NextResponse.json({
+      skills: parsed.skills || [],
+      suggestedRoles: parsed.suggestedRoles || [],
+      summary: parsed.summary || "",
+      experienceLevel: parsed.experienceLevel || "Mid-Level",
+    });
   } catch (error: any) {
-    console.error("AI ANALYSIS ERROR:", error);
+    console.error("[resume/analyze] Error:", error);
     return NextResponse.json(
-      { error: error?.message || "AI analysis failed" },
+      { error: error?.message || "Failed to analyze resume" },
       { status: 500 }
     );
   }

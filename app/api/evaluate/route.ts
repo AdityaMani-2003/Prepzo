@@ -1,85 +1,140 @@
-import { NextResponse } from "next/server";
-import { evaluateAnswer } from "@/services/ai.service";
-import { generateEmbedding } from "@/lib/ai/gemini";
-import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabaseServer";
+import { generateEmbedding } from "@/lib/ai/gemini";
+import { evaluateAnswer } from "@/services/ai.service";
+import { saveFeedback } from "@/services/feedback.service";
 import { pruneOldMessages, truncate } from "@/utils/pruneMessages";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function POST(request: Request) {
-  const supabase = await createClient();
-
-  // AUTH CHECK
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (!user) {
-    console.error("[evaluate] AUTH FAILED:", userError);
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
-  // PARSE BODY
-  let body: any;
-  try { body = await request.json(); } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  const { question, answer, topic } = body;
-  if (!question || !answer) {
-    return NextResponse.json({ error: "Missing question or answer" }, { status: 400 });
-  }
-
-  // RAG (non-blocking)
-  let ragContext = "";
+export async function POST(req: NextRequest) {
   try {
-    const vec = await generateEmbedding(answer);
-    const { data: chunks } = await supabase.rpc("match_resume_chunks", {
-      query_embedding: vec, match_threshold: 0.3, match_count: 3, auth_user_id: user.id,
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { question, answer, topic = "General Technical", sessionId } = await req.json();
+
+    if (!question || !answer) {
+      return NextResponse.json(
+        { error: "Both question and answer are required" },
+        { status: 400 }
+      );
+    }
+
+    const activeSessionId = sessionId || crypto.randomUUID();
+
+    // 1. RAG Context Retrieval from user's resume embeddings
+    let ragContext = "";
+    try {
+      if (answer.trim().length > 20) {
+        const queryVector = await generateEmbedding(answer.substring(0, 1000));
+        const { data: chunks, error: rpcError } = await supabase.rpc(
+          "match_resume_chunks",
+          {
+            query_embedding: queryVector,
+            match_threshold: 0.3,
+            match_count: 3,
+            auth_user_id: user.id,
+          }
+        );
+
+        if (!rpcError && chunks && chunks.length > 0) {
+          ragContext = chunks.map((c: { content: string }) => c.content).join("\n---\n");
+        }
+      }
+    } catch (ragErr) {
+      console.warn("[evaluate] RAG retrieval skipped or failed:", ragErr);
+    }
+
+    // 2. AI Evaluation via Gemini
+    const evalResult = await evaluateAnswer(question, answer, ragContext);
+
+    const breakdown = evalResult.score_breakdown || {
+      clarity: 7,
+      technical: 7,
+      communication: 7,
+    };
+
+    const clarity = Number(breakdown.clarity) || 7;
+    const technical = Number(breakdown.technical) || 7;
+    const communication = Number(breakdown.communication || breakdown.structure) || 7;
+
+    const overallScore = Math.round(((clarity + technical + communication) / 3) * 10) / 10;
+
+    // 3. Save Candidate Answer to interview_messages
+    await supabase.from("interview_messages").insert({
+      session_id: activeSessionId,
+      user_id: user.id,
+      type: "answer",
+      content: truncate(answer.trim(), 4000),
+      score: null,
+      metadata: { question: truncate(question, 500), topic },
     });
-    if (chunks?.length) ragContext = chunks.map((c: any) => c.content).join("\n\n---\n\n");
-  } catch (e: any) { console.warn("[evaluate] RAG skipped:", e.message); }
 
-  // AI EVALUATION
-  let result: any;
-  try {
-    result = await evaluateAnswer(question, answer, ragContext);
-  } catch (aiErr: any) {
-    console.error("[evaluate] AI FAILED:", aiErr.message);
-    return NextResponse.json({ error: "AI evaluation failed: " + aiErr.message }, { status: 500 });
-  }
+    // 4. Save Evaluation to interview_messages
+    const whyThisScore = evalResult.why_this_score || "Evaluation based on clarity, technical accuracy, and structure.";
+    const improvedAnswer = evalResult.improved_answer || "";
 
-  // STORE EVALUATION — skip interview_sessions (PGRST204 bug), write directly to messages
-  const commScore = result.score_breakdown?.communication || (result.score_breakdown as any)?.structure || 0;
-  const avgScore = Math.round(
-    ((result.score_breakdown?.clarity || 0) + (result.score_breakdown?.technical || 0) + commScore) / 3
-  );
-
-  // Use a deterministic "virtual session" UUID based on user+topic to group evals
-  const virtualSessionId = crypto.randomUUID();
-
-  const { data: insertData, error: insertErr } = await supabase
-    .from("interview_messages")
-    .insert({
-      session_id: virtualSessionId,
+    await supabase.from("interview_messages").insert({
+      session_id: activeSessionId,
       user_id: user.id,
       type: "evaluation",
-      content: truncate(result.why_this_score || "Evaluation complete.", 1000),
-      score: avgScore || 5,
+      content: truncate(whyThisScore, 2000),
+      score: overallScore,
       metadata: {
-        score_breakdown: result.score_breakdown,
-        strengths: result.strengths,
-        weaknesses: result.weaknesses,
-        // Trim improved_answer — it can be 500+ words and is the biggest metadata field
-        improved_answer: truncate(result.improved_answer || "", 1000),
-        topic: topic || "General",
+        score_breakdown: { clarity, technical, communication },
+        strengths: evalResult.strengths || [],
+        weaknesses: evalResult.weaknesses || [],
+        improved_answer: truncate(improvedAnswer, 1500),
+        why_this_score: truncate(whyThisScore, 1000),
+        topic,
+        question: truncate(question, 500),
       },
-    })
-    .select();
+    });
 
-  if (insertErr) {
-    console.error("[evaluate] Insert failed:", insertErr);
-  } else {
-    // Prune oldest rows if user exceeds cap (non-blocking)
-    pruneOldMessages(supabase, user.id);
+    // 5. Update skill metrics & auto prune
+    try {
+      await saveFeedback(
+        {
+          user_id: user.id,
+          question,
+          user_answer: answer,
+          clarity_score: clarity,
+          technical_score: technical,
+          structure_score: communication,
+          strengths: evalResult.strengths || [],
+          weaknesses: evalResult.weaknesses || [],
+          improved_answer: improvedAnswer,
+        },
+        topic
+      );
+    } catch (saveErr) {
+      console.warn("[evaluate] saveFeedback failed:", saveErr);
+    }
+
+    await pruneOldMessages(supabase, user.id);
+
+    return NextResponse.json({
+      success: true,
+      score: overallScore,
+      score_breakdown: { clarity, technical, communication },
+      strengths: evalResult.strengths || [],
+      weaknesses: evalResult.weaknesses || [],
+      improved_answer: improvedAnswer,
+      optimal_solution: evalResult.optimal_solution || "",
+      why_this_score: whyThisScore,
+      sessionId: activeSessionId,
+    });
+  } catch (error: any) {
+    console.error("[evaluate] Error during evaluation:", error);
+    return NextResponse.json(
+      { error: error?.message || "Failed to evaluate answer" },
+      { status: 500 }
+    );
   }
-
-  revalidatePath("/progress");
-
-  return NextResponse.json(result);
 }

@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useMemo } from "react";
 import { Flame } from "lucide-react";
-import { createClient } from "@/lib/supabaseClient";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -88,7 +87,7 @@ export function StreakCard({ evalDates = [] }: { evalDates?: string[] }) {
       )}
       {practicedToday && (
         <p className="text-[11px] text-emerald-400/80 mt-2">
-          ✅ Great work! You've practiced today.
+          ✅ Great work! You&apos;ve practiced today.
         </p>
       )}
     </div>

@@ -1,84 +1,54 @@
-import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabaseServer";
 import { generateQuestion } from "@/services/ai.service";
 import { pruneOldMessages, truncate } from "@/utils/pruneMessages";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function POST(request: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const body = await request.json();
-    const { role } = body;
-
-    if (!role || typeof role !== "string") {
-      return NextResponse.json(
-        { error: "Missing or invalid 'role' field" },
-        { status: 400 }
-      );
-    }
-
     const supabase = await createClient();
     const {
       data: { user },
+      error: authError,
     } = await supabase.auth.getUser();
 
-    if (!user) {
-      return NextResponse.json(
-        { error: "Unauthorized access. Please log in." },
-        { status: 401 }
-      );
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Fetch latest resume for the authenticated user
-    let resumeText = "";
-    try {
-      const { data: resume } = await supabase
+    const { role = "Fullstack Engineer", resumeText, sessionId } = await req.json();
+
+    let context = resumeText;
+    if (!context) {
+      const { data: resumeRow } = await supabase
         .from("resumes")
         .select("parsed_text")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
-      if (resume?.parsed_text) {
-        resumeText = resume.parsed_text;
-
+      if (resumeRow?.parsed_text) {
+        context = resumeRow.parsed_text;
       }
-    } catch (resumeErr) {
-
     }
 
-    const result = await generateQuestion(role, resumeText);
-    
-    // Log robust session persistence to backend exclusively
-    try {
-      // 1. Instantiate multi-turn Interview Session
-      const { data: sessionData, error: sessionErr } = await supabase
-        .from("interview_sessions")
-        .insert({
-          user_id: user.id,
-          role: role
-        })
-        .select("id")
-        .single();
-        
-      if (!sessionErr && sessionData) {
-        // 2. Log first generated structural question
-        await supabase.from("interview_messages").insert({
-          session_id: sessionData.id,
-          user_id: user.id,
-          type: "question",
-          content: truncate(result.question, 2000),
-          metadata: { difficulty: result.difficulty, topic: result.topic }
-        });
-        // Prune oldest rows if user exceeds cap (non-blocking)
-        pruneOldMessages(supabase, user.id);
-      }
-    } catch (dbErr) {
-      console.error("Failed to log architectural session structure:", dbErr);
-    }
+    const result = await generateQuestion(role, context);
+    const activeSessionId = sessionId || crypto.randomUUID();
 
-    return NextResponse.json(result);
+    await supabase.from("interview_messages").insert({
+      session_id: activeSessionId,
+      user_id: user.id,
+      type: "question",
+      content: truncate(result.question, 2000),
+      score: null,
+      metadata: { role, topic: result.topic },
+    });
+
+    await pruneOldMessages(supabase, user.id);
+
+    return NextResponse.json({ ...result, sessionId: activeSessionId });
   } catch (error: any) {
-    console.error("[/api/question] Error:", error);
+    console.error("[api/question] Error:", error);
     return NextResponse.json(
       { error: error?.message || "Failed to generate question" },
       { status: 500 }

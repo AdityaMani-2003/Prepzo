@@ -1,77 +1,132 @@
 import { createClient } from "@/lib/supabaseServer";
 import { streamQuestion } from "@/services/ai.service";
 import { pruneOldMessages, truncate } from "@/utils/pruneMessages";
+import { NextRequest } from "next/server";
 
-export async function POST(request: Request) {
+export const runtime = "nodejs";
+
+export async function POST(req: NextRequest) {
   try {
-    const body = await request.json();
-    const { role, targetCompany } = body;
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const body = await req.json();
+    const { role, targetCompany, roundType, experienceLevel, sessionId } = body;
 
     if (!role || typeof role !== "string") {
-      return new Response(JSON.stringify({ error: "Missing 'role' field" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Role is required" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-
-    if (!user) {
-      console.error("[stream-question] AUTH FAILED");
-      return new Response(JSON.stringify({ error: "Not authenticated" }), { status: 401 });
-    }
-
-
-
-    // Fetch resume (non-blocking)
+    // Fetch user's resume text if available
     let resumeText = "";
     try {
-      const { data: resume } = await supabase
-        .from("resumes").select("parsed_text").eq("user_id", user.id)
-        .order("created_at", { ascending: false }).limit(1).single();
-      if (resume?.parsed_text) resumeText = resume.parsed_text;
-    } catch { /* no resume yet */ }
+      const { data: resumeRow } = await supabase
+        .from("resumes")
+        .select("parsed_text")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-    // SSE Stream — skip session creation (PGRST204 bug on interview_sessions)
+      if (resumeRow?.parsed_text) {
+        resumeText = resumeRow.parsed_text;
+      }
+    } catch (err) {
+      console.warn("[stream-question] Could not retrieve resume:", err);
+    }
+
+    const currentSessionId = sessionId || crypto.randomUUID();
+    let accumulatedQuestion = "";
+
     const encoder = new TextEncoder();
-    let completeText = "";
-
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          for await (const chunk of streamQuestion(role, resumeText, targetCompany)) {
+          const generator = streamQuestion({
+            role,
+            resumeText,
+            targetCompany,
+            roundType,
+            experienceLevel,
+          });
+
+          for await (const chunk of generator) {
             if (chunk) {
-              completeText += chunk;
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: chunk })}\n\n`));
+              accumulatedQuestion += chunk;
+              const payload = JSON.stringify({ text: chunk });
+              controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
             }
           }
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, topic: role, difficulty: "hard" })}\n\n`));
-          controller.close();
 
-          // Log question to messages (skip session FK)
-          if (completeText.trim()) {
-            await supabase.from("interview_messages").insert({
-              session_id: crypto.randomUUID(),
-              user_id: user.id,
-              type: "question",
-              content: truncate(completeText, 2000),
-              metadata: { difficulty: "hard", topic: role },
-            });
-            // Prune oldest rows if user exceeds cap (non-blocking)
-            pruneOldMessages(supabase, user.id);
+          // Complete signal
+          const donePayload = JSON.stringify({
+            done: true,
+            topic: role,
+            difficulty: "intermediate/advanced",
+            sessionId: currentSessionId,
+          });
+          controller.enqueue(encoder.encode(`data: ${donePayload}\n\n`));
+
+          // Save generated question to DB asynchronously
+          if (accumulatedQuestion.trim()) {
+            try {
+              await supabase.from("interview_messages").insert({
+                session_id: currentSessionId,
+                user_id: user.id,
+                type: "question",
+                content: truncate(accumulatedQuestion.trim(), 2000),
+                score: null,
+                metadata: {
+                  role,
+                  targetCompany: targetCompany || null,
+                  hasResumeContext: !!resumeText,
+                },
+              });
+
+              // Best-effort pruning
+              await pruneOldMessages(supabase, user.id);
+            } catch (dbErr) {
+              console.error("[stream-question] Message save error:", dbErr);
+            }
           }
-        } catch (err: any) {
-          console.error("[stream-question] ERROR:", err.message);
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: "Unable to generate question, please try again" })}\n\n`));
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, topic: role, difficulty: "hard" })}\n\n`));
+
+          controller.close();
+        } catch (streamErr: any) {
+          console.error("[stream-question] Generation error:", streamErr);
+          const errPayload = JSON.stringify({
+            error: streamErr?.message || "Failed to stream interview question.",
+          });
+          controller.enqueue(encoder.encode(`event: error\ndata: ${errPayload}\n\n`));
           controller.close();
         }
       },
     });
 
     return new Response(stream, {
-      headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" },
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
     });
   } catch (error: any) {
-    console.error("[stream-question] FATAL:", error.message);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+    console.error("[stream-question] Endpoint exception:", error);
+    return new Response(
+      JSON.stringify({ error: error?.message || "Internal server error" }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
 }

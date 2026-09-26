@@ -1,89 +1,106 @@
 import { createClient } from "@/lib/supabaseServer";
 import { GoogleGenAI } from "@google/genai";
-const pdfParse = require("pdf-parse");
+import { NextRequest, NextResponse } from "next/server";
 
-// Increase potential edge execution timeout
-export const maxDuration = 60; // 60 seconds
-export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-export async function POST(request: Request) {
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY || "",
+});
+
+export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
 
-    if (!user) {
-      return new Response(JSON.stringify({ error: "Unauthorized access." }), { status: 401 });
+    if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const formData = await request.formData();
-    const file = formData.get("file") as File;
+    const formData = await req.formData();
+    const file = formData.get("file") as File | null;
 
     if (!file) {
-      return new Response(JSON.stringify({ error: "No file provided." }), { status: 400 });
+      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      return new Response(JSON.stringify({ error: "File exceeds 5MB size limit." }), { status: 400 });
+    const fileName = file.name || "Resume.pdf";
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // If it's a text file
+    if (file.type.includes("text") || fileName.endsWith(".txt")) {
+      const text = buffer.toString("utf-8");
+      return NextResponse.json({ text, fileName });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
     let extractedText = "";
-    let source = "pdf-parse";
 
-    if (file.type === "application/pdf") {
+    // 1. Try local PDF parser
+    try {
+      const pdfModule = require("pdf-parse");
+      if (typeof pdfModule === "function") {
+        const parsed = await pdfModule(buffer);
+        extractedText = parsed?.text || "";
+      } else if (pdfModule?.PDFParse) {
+        // v2 instance approach
+        const parser = new pdfModule.PDFParse();
+        const parsed = await parser.parse(buffer);
+        extractedText = parsed?.text || "";
+      }
+    } catch (parseErr) {
+      console.warn("[parse-resume] Node PDF parse fallback:", parseErr);
+    }
+
+    // 2. If text is empty or too short (scanned PDF), use Gemini Vision OCR
+    if (!extractedText || extractedText.trim().length < 50) {
       try {
-        const parsed = await pdfParse(buffer);
-        extractedText = parsed.text;
-      } catch (err) {
-        console.warn("[parse-resume] pdf-parse failed, likely heavily formatted or corrupted mapping.");
+        const base64Data = buffer.toString("base64");
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: "application/pdf",
+                    data: base64Data,
+                  },
+                },
+                {
+                  text: "You are an OCR and document parsing engine. Extract all the textual content from this resume document accurately, maintaining clear sections (Summary, Skills, Work Experience, Education, Projects). Output ONLY the clean plain text of the resume.",
+                },
+              ],
+            },
+          ],
+        });
+
+        extractedText = response.text || "";
+      } catch (ocrErr: any) {
+        console.error("[parse-resume] Gemini OCR failed:", ocrErr);
       }
-
-      // OCR Fallback Triggers
-      if (!extractedText || extractedText.trim().length < 50) {
-        source = "gemini-ocr";
-        
-        try {
-          const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
-          const base64Data = buffer.toString("base64");
-
-          const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: [
-              "You are a strict data-extraction engine. Extract all readable text from this document. Output ONLY the raw textual data without conversation, without formatting modifications, and absolutely no markdown blocks. Do not summarize.",
-              {
-                inlineData: {
-                  data: base64Data,
-                  mimeType: "application/pdf"
-                }
-              }
-            ]
-          });
-
-          extractedText = response.text || "";
-        } catch (ocrErr: any) {
-          console.error("[parse-resume] Gemini OCR failed:", ocrErr);
-          return new Response(JSON.stringify({ 
-            error: "Document mapping completely failed. The file may be corrupt or heavily locked. Please try a standard text-based PDF."
-          }), { status: 422 });
-        }
-      }
-    } else if (file.type === "text/plain") {
-      extractedText = buffer.toString("utf-8");
-      source = "text-parse";
-    } else {
-       return new Response(JSON.stringify({ error: "Unsupported file type." }), { status: 400 });
     }
 
     if (!extractedText || extractedText.trim().length === 0) {
-       return new Response(JSON.stringify({ error: "File successfully processed but contained no detectable text elements." }), { status: 422 });
+      return NextResponse.json(
+        { error: "Could not extract readable text from this file." },
+        { status: 422 }
+      );
     }
 
-    return new Response(JSON.stringify({ text: extractedText.trim(), source }), {
-      headers: { "Content-Type": "application/json" }
+    return NextResponse.json({
+      text: extractedText.trim(),
+      fileName,
     });
-
-  } catch (err: any) {
-    console.error("[parse-resume] Fatal pipeline crash:", err);
-    return new Response(JSON.stringify({ error: "Internal server processing failure." }), { status: 500 });
+  } catch (error: any) {
+    console.error("[parse-resume] Error:", error);
+    return NextResponse.json(
+      { error: error?.message || "Failed to process resume file" },
+      { status: 500 }
+    );
   }
 }

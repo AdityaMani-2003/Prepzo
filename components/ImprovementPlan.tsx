@@ -1,7 +1,22 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { ChevronDown, CheckCircle, Circle, MessageSquare, BookOpen, Mic, Loader2, Target, Sparkles, Download } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
+import {
+  ChevronDown,
+  CheckCircle,
+  Circle,
+  MessageSquare,
+  BookOpen,
+  Mic,
+  Loader2,
+  Target,
+  Sparkles,
+  Download,
+  Building2,
+  Briefcase,
+  RotateCcw,
+  SlidersHorizontal,
+} from "lucide-react";
 import { parseAIContent } from "@/utils/parseAI";
 
 interface Task {
@@ -22,6 +37,8 @@ interface PlanData {
   days: DayPlan[];
   summary: string;
   targetElo: number;
+  role?: string;
+  targetCompany?: string;
 }
 
 const TASK_ICONS: Record<string, { icon: typeof MessageSquare; color: string }> = {
@@ -67,6 +84,8 @@ function planToText(plan: PlanData): string {
   lines.push("");
   lines.push(`Generated: ${dateStr}`);
   lines.push(`Target ELO: ${plan.targetElo}`);
+  if (plan.role) lines.push(`Target Role: ${plan.role}`);
+  if (plan.targetCompany) lines.push(`Target Company: ${plan.targetCompany}`);
   lines.push(`Powered by Prepzo — AI Interview Preparation`);
   lines.push("");
   lines.push("───────────────────────────────────────────────");
@@ -116,7 +135,7 @@ function downloadAsText(plan: PlanData) {
 }
 
 /**
- * Generate and download PDF using jspdf
+ * Generate and download PDF using jspdf with zero text overlapping
  */
 async function downloadAsPdf(plan: PlanData) {
   const { jsPDF } = await import("jspdf");
@@ -124,7 +143,7 @@ async function downloadAsPdf(plan: PlanData) {
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 18;
+  const margin = 16;
   const contentWidth = pageWidth - margin * 2;
   let y = margin;
 
@@ -141,113 +160,162 @@ async function downloadAsPdf(plan: PlanData) {
     }
   };
 
-  // ─── Header ──────────────────────────────────────
-  doc.setFillColor(45, 27, 105);
+  // ─── Header Banner ──────────────────────────────
+  doc.setFillColor(30, 27, 75); // Dark Indigo
   doc.rect(0, 0, pageWidth, 42, "F");
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(22);
+  doc.setFontSize(18);
   doc.setTextColor(255, 255, 255);
-  doc.text("Your 7-Day Improvement Plan", margin, 20);
+  doc.text("7-Day Interview Improvement Plan", margin, 17);
 
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(200, 200, 230);
-  doc.text(`Generated: ${dateStr}  |  Target ELO: ${plan.targetElo}`, margin, 30);
-  doc.text("Prepzo — AI Interview Preparation Platform", margin, 37);
+  doc.setFontSize(8.5);
+  doc.setTextColor(199, 210, 254);
+  const metaParts = [
+    `Date: ${dateStr}`,
+    `Target ELO: ${plan.targetElo}`,
+    plan.role ? `Role: ${plan.role}` : null,
+    plan.targetCompany ? `Target: ${plan.targetCompany}` : null,
+  ].filter(Boolean);
+  doc.text(metaParts.join("   •   "), margin, 27);
+
+  doc.setFontSize(8);
+  doc.setTextColor(165, 180, 252);
+  doc.text("Prepzo AI Career Coach — Adaptive curriculum tailored to real hiring standards.", margin, 35);
 
   y = 52;
 
-  // ─── Summary ─────────────────────────────────────
+  // ─── Summary / Overview ─────────────────────────
+  addPageIfNeeded(25);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
-  doc.setTextColor(50, 50, 80);
-  doc.text("Plan Overview", margin, y);
-  y += 7;
+  doc.setTextColor(30, 41, 59);
+  doc.text("Executive Diagnostic Overview", margin, y);
+  y += 6;
 
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(80, 80, 100);
+  doc.setFontSize(9.5);
+  doc.setTextColor(71, 85, 105);
   const summaryText = stripHtml(plan.summary);
-  const summaryLines = doc.splitTextToSize(summaryText, contentWidth);
-  addPageIfNeeded(summaryLines.length * 5 + 4);
+  const summaryLines = doc.splitTextToSize(summaryText, contentWidth - 4);
   doc.text(summaryLines, margin, y);
-  y += summaryLines.length * 5 + 8;
+  y += summaryLines.length * 4.5 + 8;
 
-  // ─── Day Cards ───────────────────────────────────
+  // ─── Day-by-Day Plan ─────────────────────────────
   for (const day of plan.days) {
-    addPageIfNeeded(35);
+    const focusText = `Day ${day.day}: ${day.focus}`;
+    const focusLines = doc.splitTextToSize(focusText, contentWidth - 10);
+    const goalText = `Target Milestone: ${day.goal}`;
+    const goalLines = doc.splitTextToSize(goalText, contentWidth - 12);
 
-    // Day header bar
-    doc.setFillColor(238, 235, 255);
-    doc.roundedRect(margin, y - 2, contentWidth, 12, 2, 2, "F");
+    const headerHeight = focusLines.length * 5 + goalLines.length * 4 + 7;
+    addPageIfNeeded(headerHeight + 25);
 
+    // Day Header Box
+    doc.setFillColor(243, 244, 246); // Light slate
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, y - 2, contentWidth, headerHeight, 2, 2, "FD");
+
+    // Day Title (Line 1+)
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
-    doc.setTextColor(67, 56, 202);
-    doc.text(`Day ${day.day}: ${day.focus}`, margin + 4, y + 5);
+    doc.setTextColor(79, 70, 229); // Indigo 600
+    doc.text(focusLines, margin + 4, y + 4);
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(120, 120, 160);
-    const goalWidth = doc.getTextWidth(`Goal: ${day.goal}`);
-    doc.text(`Goal: ${day.goal}`, margin + contentWidth - goalWidth - 4, y + 5);
+    const goalY = y + 4 + focusLines.length * 5;
 
-    y += 16;
+    // Day Goal (Dedicated row below Title - NEVER overlaps!)
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(8.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(goalLines, margin + 4, goalY);
 
-    // Tasks
+    y += headerHeight + 5;
+
+    // Tasks under this day
     for (let i = 0; i < day.tasks.length; i++) {
       const task = day.tasks[i];
       const typeLabel = TYPE_LABELS[task.type] || task.type;
       const descText = stripHtml(task.description);
-      const descLines = doc.splitTextToSize(descText, contentWidth - 14);
+      const descLines = doc.splitTextToSize(descText, contentWidth - 12);
+      const taskSpaceNeeded = 7 + 5 + descLines.length * 4 + 6;
 
-      addPageIfNeeded(descLines.length * 4 + 16);
+      addPageIfNeeded(taskSpaceNeeded);
 
-      // Task title
+      // Task number and Title
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(40, 40, 60);
-      doc.text(`${i + 1}. ${task.title}`, margin + 4, y);
+      doc.setFontSize(9.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${i + 1}. ${task.title}`, margin + 3, y);
 
-      // Meta pill
-      doc.setFont("helvetica", "normal");
+      // Badge: Type & Duration
+      doc.setFont("helvetica", "bold");
       doc.setFontSize(8);
-      doc.setTextColor(130, 130, 155);
-      doc.text(`${typeLabel}  •  ${task.duration}`, margin + 6, y + 5);
-      y += 9;
+      doc.setTextColor(99, 102, 241);
+      doc.text(`[${typeLabel.toUpperCase()}]`, margin + 5, y + 4.5);
+
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Duration: ${task.duration}`, margin + 30, y + 4.5);
 
       // Description
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(80, 80, 100);
-      doc.text(descLines, margin + 6, y);
-      y += descLines.length * 4 + 6;
+      doc.setFontSize(8.5);
+      doc.setTextColor(51, 65, 85);
+      doc.text(descLines, margin + 5, y + 9);
+
+      y += 9 + descLines.length * 4 + 4;
     }
 
-    y += 4;
+    y += 4; // Space between days
   }
 
-  // ─── Footer ──────────────────────────────────────
-  addPageIfNeeded(20);
-  doc.setDrawColor(200, 200, 220);
-  doc.line(margin, y, pageWidth - margin, y);
-  y += 6;
-  doc.setFont("helvetica", "italic");
-  doc.setFontSize(9);
-  doc.setTextColor(140, 140, 160);
-  doc.text("© Prepzo — Crack your next interview with confidence.", margin, y);
+  // ─── Add Running Page Numbers & Footer ───────────
+  const totalPages = doc.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(226, 232, 240);
+    doc.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12);
 
-  doc.save(`Prepzo_Improvement_Plan_${new Date().toISOString().split("T")[0]}.pdf`);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text("Prepzo AI Career Coach — https://prepzo.com", margin, pageHeight - 7);
+    doc.text(`Page ${p} of ${totalPages}`, pageWidth - margin - 18, pageHeight - 7);
+  }
+
+  doc.save(`Prepzo_7Day_Curriculum_${new Date().toISOString().split("T")[0]}.pdf`);
 }
 
-export function ImprovementPlan({ weakAreas, eloScore }: { weakAreas: string[]; eloScore: number }) {
+export function ImprovementPlan({
+  weakAreas,
+  eloScore,
+  initialRole,
+  initialCompany,
+}: {
+  weakAreas: string[];
+  eloScore: number;
+  initialRole?: string;
+  initialCompany?: string;
+}) {
+  const [role, setRole] = useState(initialRole || "Full-Stack Software Engineer");
+  const [targetCompany, setTargetCompany] = useState(initialCompany || "");
   const [plan, setPlan] = useState<PlanData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedDays, setExpandedDays] = useState<Set<number>>(new Set([1]));
   const [completedTasks, setCompletedTasks] = useState<Set<string>>(new Set());
   const [downloading, setDownloading] = useState(false);
+
+  useEffect(() => {
+    try {
+      const savedCompany = localStorage.getItem("prepzo_target_company");
+      if (savedCompany && !initialCompany) setTargetCompany(savedCompany);
+      const savedRole = localStorage.getItem("prepzo_role");
+      if (savedRole && !initialRole) setRole(savedRole);
+    } catch {}
+  }, [initialCompany, initialRole]);
 
   const generatePlan = useCallback(async () => {
     setLoading(true);
@@ -256,7 +324,7 @@ export function ImprovementPlan({ weakAreas, eloScore }: { weakAreas: string[]; 
       const res = await fetch("/api/improvement-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ weakAreas, eloScore }),
+        body: JSON.stringify({ weakAreas, eloScore, role, targetCompany }),
       });
       if (!res.ok) throw new Error("Failed to generate plan");
       const data = await res.json();
@@ -267,7 +335,7 @@ export function ImprovementPlan({ weakAreas, eloScore }: { weakAreas: string[]; 
     } finally {
       setLoading(false);
     }
-  }, [weakAreas, eloScore]);
+  }, [weakAreas, eloScore, role, targetCompany]);
 
   const handleDownload = useCallback(async () => {
     if (!plan || downloading) return;
@@ -304,34 +372,48 @@ export function ImprovementPlan({ weakAreas, eloScore }: { weakAreas: string[]; 
     });
   };
 
+  const popularCompanies = [
+    { label: "Google", value: "Google" },
+    { label: "Amazon", value: "Amazon" },
+    { label: "Meta", value: "Meta" },
+    { label: "Microsoft", value: "Microsoft" },
+    { label: "Stripe", value: "Stripe" },
+    { label: "TCS / Infosys", value: "TCS / Infosys" },
+    { label: "High-Growth Startup", value: "High-Growth Startup" },
+  ];
+
   if (!plan) {
     if (loading) {
       return (
-        <div className="rounded-xl bg-[var(--bg-card)] border border-indigo-500/20 p-6 mt-7 shadow-[var(--shadow-elevated)] relative overflow-hidden">
-          <div className="absolute inset-0 bg-indigo-500/5 animate-pulse rounded-xl" />
+        <div className="rounded-2xl bg-[var(--bg-card)] border border-indigo-500/20 p-6 mt-7 shadow-[var(--shadow-elevated)] relative overflow-hidden">
+          <div className="absolute inset-0 bg-indigo-500/5 animate-pulse rounded-2xl" />
           <div className="relative z-10">
             <div className="flex items-center gap-3 mb-6">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500/10">
-                <Loader2 className="h-4 w-4 text-indigo-400 animate-spin" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
               </div>
               <div>
-                <h3 className="text-[14px] font-semibold text-[var(--text-primary)]">Engineering Improvement Plan</h3>
-                <p className="text-[11px] text-[var(--text-muted)] mt-0.5">Activating intelligence engine</p>
+                <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+                  Architecting 7-Day Curriculum
+                </h3>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                  Analyzing performance, DSA patterns, SQL drills, and target company standards
+                </p>
               </div>
             </div>
             
-            <div className="flex flex-col gap-4 pl-1">
-              <div className="flex items-center gap-3 text-[13px] font-medium text-[var(--text-secondary)] animate-pulse">
+            <div className="flex flex-col gap-3.5 pl-1">
+              <div className="flex items-center gap-3 text-xs font-medium text-[var(--text-secondary)] animate-pulse">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                Analyzing weak areas and telemetry...
+                Synthesizing diagnostic weaknesses & telemetry...
               </div>
-              <div className="flex items-center gap-3 text-[13px] font-medium text-[var(--text-secondary)] animate-pulse" style={{ animationDelay: "0.4s" }}>
+              <div className="flex items-center gap-3 text-xs font-medium text-[var(--text-secondary)] animate-pulse" style={{ animationDelay: "0.4s" }}>
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                Generating daily task distribution...
+                Structuring LeetCode algorithms, SQL challenges, and core CS fundamentals...
               </div>
-              <div className="flex items-center gap-3 text-[13px] font-medium text-[var(--text-secondary)] animate-pulse" style={{ animationDelay: "0.8s" }}>
+              <div className="flex items-center gap-3 text-xs font-medium text-[var(--text-secondary)] animate-pulse" style={{ animationDelay: "0.8s" }}>
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                Finalizing optimal preparation schedule...
+                Tailoring resume architectural defense and company-specific behavioral drills...
               </div>
             </div>
           </div>
@@ -340,25 +422,110 @@ export function ImprovementPlan({ weakAreas, eloScore }: { weakAreas: string[]; 
     }
 
     return (
-      <div className="rounded-xl bg-gradient-to-br from-indigo-500/[0.07] to-purple-500/[0.05] border border-indigo-500/15 p-6 mt-7">
-        <div className="flex items-center gap-2 mb-2">
-          <Sparkles className="h-4 w-4 text-indigo-400" />
-          <h3 className="text-[14px] font-semibold text-gray-900 dark:text-white">AI Improvement Plan</h3>
+      <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-card)] p-6 mt-7 space-y-5">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase tracking-wider mb-1">
+              <Sparkles className="h-4 w-4" />
+              Adaptive 7-Day Study Track
+            </div>
+            <h3 className="text-lg font-bold text-[var(--text-primary)]">
+              Personalized Engineering Curriculum
+            </h3>
+            <p className="text-xs text-[var(--text-secondary)] mt-1 max-w-xl">
+              Construct a tailored, high-yield preparation schedule focused on your diagnosed gaps, real interview questions, and target company hiring expectations.
+            </p>
+          </div>
         </div>
-        <p className="text-[13px] text-gray-500 dark:text-gray-400 mb-4">
-          Get a personalized 7-day plan to boost your interview performance.
-        </p>
+
+        {/* Customization Inputs */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+          {/* Role Input */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+              Target Role
+            </label>
+            <div className="relative">
+              <Briefcase className="absolute left-3.5 top-3.5 h-4 w-4 text-[var(--text-muted)]" />
+              <input
+                type="text"
+                value={role}
+                onChange={(e) => {
+                  setRole(e.target.value);
+                  try { localStorage.setItem("prepzo_role", e.target.value); } catch {}
+                }}
+                placeholder="e.g. Software Engineer, Backend SDE, Full-Stack"
+                className="input-icon-left text-xs"
+              />
+            </div>
+          </div>
+
+          {/* Company Input */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+              Target Company (Optional)
+            </label>
+            <div className="relative">
+              <Building2 className="absolute left-3.5 top-3.5 h-4 w-4 text-[var(--text-muted)]" />
+              <input
+                type="text"
+                value={targetCompany}
+                onChange={(e) => {
+                  setTargetCompany(e.target.value);
+                  try { localStorage.setItem("prepzo_target_company", e.target.value); } catch {}
+                }}
+                placeholder="e.g. Google, Amazon, Meta, TCS, Stripe"
+                className="input-icon-left text-xs"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Quick Company Chips */}
+        <div>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] block mb-2">
+            Quick Select Target Standards:
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {popularCompanies.map((c) => {
+              const isSelected = targetCompany.toLowerCase() === c.value.toLowerCase();
+              return (
+                <button
+                  key={c.value}
+                  type="button"
+                  onClick={() => {
+                    setTargetCompany(c.value);
+                    try { localStorage.setItem("prepzo_target_company", c.value); } catch {}
+                  }}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+                    isSelected
+                      ? "bg-indigo-600 text-white font-semibold shadow-sm"
+                      : "bg-[var(--bg-surface)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:border-indigo-500/40 hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {c.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {error && (
-          <p className="text-[12px] text-red-400 mb-3">{error}</p>
+          <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+            {error}
+          </p>
         )}
-        <button
-          type="button"
-          onClick={generatePlan}
-          className="inline-flex items-center gap-2 rounded-lg bg-[var(--accent)] px-5 py-2.5 text-[13px] font-[600] text-white hover:bg-[var(--accent-hover)] transition-all shadow-md shadow-indigo-500/20 active:scale-[0.98]"
-        >
-          <Sparkles className="h-4 w-4" />
-          Generate 7-Day Plan
-        </button>
+
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={generatePlan}
+            className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] px-5 py-2.5 text-xs font-semibold text-white hover:bg-[var(--accent-hover)] transition-all shadow-[var(--shadow-glow)] active:scale-[0.98]"
+          >
+            <Sparkles className="h-4 w-4" />
+            Generate Tailored 7-Day Plan
+          </button>
+        </div>
       </div>
     );
   }
@@ -366,36 +533,60 @@ export function ImprovementPlan({ weakAreas, eloScore }: { weakAreas: string[]; 
   return (
     <div className="mt-7 space-y-5 animate-fadeInUp">
       {/* Summary header */}
-      <div className="rounded-xl bg-gradient-to-br from-indigo-500/10 to-purple-500/5 border border-indigo-500/20 p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-indigo-400" />
-            <h3 className="text-[14px] font-semibold text-gray-900 dark:text-white">Your 7-Day Plan</h3>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 text-[12px]">
-              <Target className="h-3.5 w-3.5 text-indigo-400" />
-              <span className="text-gray-500 dark:text-gray-400">Target ELO:</span>
-              <span className="font-bold text-indigo-600 dark:text-indigo-300">{plan.targetElo}</span>
+      <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--border-default)] p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2 mb-1.5">
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-0.5 text-xs font-semibold text-indigo-400">
+                <Briefcase className="h-3 w-3" />
+                {plan.role || role}
+              </span>
+              {(plan.targetCompany || targetCompany) && (
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20 px-2.5 py-0.5 text-xs font-semibold text-purple-400">
+                  <Building2 className="h-3 w-3" />
+                  {plan.targetCompany || targetCompany}
+                </span>
+              )}
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-400">
+                <Target className="h-3 w-3" />
+                Target ELO: {plan.targetElo}
+              </span>
             </div>
+            <h3 className="text-base font-bold text-[var(--text-primary)]">
+              Your 7-Day Interview Master Plan
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setPlan(null)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-2 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-all"
+              title="Change target role or company"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Adjust Targets
+            </button>
+
             <button
               type="button"
               onClick={handleDownload}
               disabled={downloading}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/[0.08] px-3 py-1.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-300 hover:bg-indigo-500/[0.15] hover:border-indigo-500/30 transition-all duration-200 active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Download as PDF"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent)] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[var(--accent-hover)] transition-all shadow-[var(--shadow-glow)] disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Download structured PDF without any text overlapping"
             >
               {downloading ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Download className="h-3 w-3" />
+                <Download className="h-3.5 w-3.5" />
               )}
-              {downloading ? "Exporting..." : "Download Plan"}
+              {downloading ? "Exporting PDF..." : "Export PDF"}
             </button>
           </div>
         </div>
+
         <div 
-          className="text-[13px] text-gray-600 dark:text-gray-300 leading-relaxed"
+          className="text-xs text-[var(--text-secondary)] leading-relaxed pt-3 border-t border-[var(--border-subtle)]"
           dangerouslySetInnerHTML={{ __html: parseAIContent(plan.summary) }}
         />
       </div>

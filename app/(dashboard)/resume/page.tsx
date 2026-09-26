@@ -1,404 +1,350 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { UploadCloud, FileText, CheckCircle, AlertCircle, Target, Loader2, CheckCircle2, AlertTriangle, ArrowRight } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { useState, useEffect, useRef } from "react";
+import {
+  Upload,
+  FileText,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Trash2,
+  RefreshCw,
+  Sparkles,
+  Award,
+  Layers,
+  Briefcase,
+  ChevronDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { parseAIContent } from "@/utils/parseAI";
 
-interface AnalysisResult {
+interface ResumeRecord {
+  id: string;
+  file_name: string;
+  parsed_text: string;
+  created_at: string;
+}
+
+interface ResumeAnalysis {
   skills: string[];
-  strengths: string[];
-  weaknesses: string[];
-  suggestions: string[];
+  suggestedRoles: string[];
+  summary: string;
+  experienceLevel: string;
 }
 
 export default function ResumePage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [parsedText, setParsedText] = useState<string>("");
-  const [isUploading, setIsUploading] = useState(false);
-  const [isOcrActive, setIsOcrActive] = useState(false);
+  const [existingResume, setExistingResume] = useState<ResumeRecord | null>(null);
+  const [analysis, setAnalysis] = useState<ResumeAnalysis | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [processingStep, setProcessingStep] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [isSuccess, setIsSuccess] = useState(false);
-  
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-
+  const [success, setSuccess] = useState<string | null>(null);
+  const [showFullText, setShowFullText] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setError(null);
-    setIsSuccess(false);
-    setAnalysisResult(null);
-    if (e.target.files && e.target.files.length > 0) {
-      const selectedFile = e.target.files[0];
-      if (selectedFile.type === "application/pdf" || selectedFile.type === "text/plain") {
-        setFile(selectedFile);
-        setParsedText(""); // reset
-      } else {
-        setFile(null);
-        setError("Only .pdf and .txt files are supported.");
-      }
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setError(null);
-    setIsSuccess(false);
-    setAnalysisResult(null);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const droppedFile = e.dataTransfer.files[0];
-      if (droppedFile.type === "application/pdf" || droppedFile.type === "text/plain") {
-        setFile(droppedFile);
-        setParsedText("");
-      } else {
-        setError("Only .pdf and .txt files are supported.");
-      }
-    }
-  };
-
-  const extractTextFromPDF = async (fileData: ArrayBuffer): Promise<string> => {
+  // Load existing resume
+  const fetchResume = async () => {
     try {
-      // Dynamically import to prevent SSR DOMMatrix crashes
-      const pdfjsLib = await import("pdfjs-dist");
-      pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-
-      const loadingTask = pdfjsLib.getDocument({ data: fileData });
-      const pdf = await loadingTask.promise;
-      let fullText = "";
-
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items.map((item: any) => item.str).join(" ");
-        fullText += pageText + "\n";
+      setLoading(true);
+      const res = await fetch("/api/resume");
+      const data = await res.json();
+      if (data.resume) {
+        setExistingResume(data.resume);
+        // Analyze text if available
+        analyzeResume(data.resume.parsed_text);
+      } else {
+        setExistingResume(null);
       }
-
-      return fullText.trim();
-    } catch (parseError) {
-      console.error("PDF Parsing Failure:", parseError);
-      throw new Error("Unable to parse this PDF file. Please ensure it is a valid text-based resume (not an image scan) or try uploading a .txt file instead.");
+    } catch (err: any) {
+      console.warn("Failed to load resume:", err);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleUpload = async () => {
+  const analyzeResume = async (text: string) => {
+    try {
+      const res = await fetch("/api/resume/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAnalysis(data);
+      }
+    } catch {
+      // Best-effort
+    }
+  };
+
+  useEffect(() => {
+    fetchResume();
+  }, []);
+
+  const handleFileUpload = async (file: File) => {
     if (!file) return;
 
-    setIsUploading(true);
-    setIsOcrActive(false);
+    // Validate type & size
+    const validExtensions = [".pdf", ".txt"];
+    const hasValidExt = validExtensions.some((ext) =>
+      file.name.toLowerCase().endsWith(ext)
+    );
+
+    if (!hasValidExt) {
+      setError("Please upload a PDF (.pdf) or text (.txt) file.");
+      return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      setError("File size exceeds 8MB limit.");
+      return;
+    }
+
     setError(null);
-    setIsSuccess(false);
+    setSuccess(null);
+    setUploading(true);
 
     try {
-      let extractedText = "";
+      // Step 1: Parse Text (with OCR fallback on server)
+      setProcessingStep("Extracting text and structure (with OCR fallback)...");
+      const formData = new FormData();
+      formData.append("file", file);
 
-      // 1. Text Extraction (Client-Side Fast Path)
-      if (file.type === "text/plain") {
-        extractedText = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (e) => resolve(e.target?.result as string);
-          reader.onerror = (e) => reject(e);
-          reader.readAsText(file);
-        });
-      } else if (file.type === "application/pdf") {
-        try {
-           const arrayBuffer = await file.arrayBuffer();
-           extractedText = await extractTextFromPDF(arrayBuffer);
-        } catch (clientFallbackTrigger) {
-           // Client parsing failed — escalate to server-side extraction
-        }
+      const parseRes = await fetch("/api/parse-resume", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!parseRes.ok) {
+        const pErr = await parseRes.json().catch(() => ({}));
+        throw new Error(pErr.error || "Could not parse document content.");
       }
 
-      // 2. OCR Server Boundary Fallback
-      if (!extractedText || extractedText.trim().length < 50) {
-        setIsOcrActive(true);
+      const { text, fileName } = await parseRes.json();
 
-
-        const formData = new FormData();
-        formData.append("file", file);
-
-        const parseRes = await fetch("/api/parse-resume", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!parseRes.ok) {
-           const errData = await parseRes.json().catch(() => ({}));
-           throw new Error(errData.error || "Advanced parsing engine failed to analyze document.");
-        }
-
-        const parseData = await parseRes.json();
-        extractedText = parseData.text;
-      }
-
-      if (!extractedText || !extractedText.trim()) {
-        throw new Error("The Intelligence Engine could not synthesize any meaningful typography from this file.");
-      }
-
-      setParsedText(extractedText);
-
-      // 2. Save to database
-      const res = await fetch("/api/resume", {
+      // Step 2: Store & Vectorize for RAG
+      setProcessingStep("Generating 768-dim embeddings with Gemini pgvector...");
+      const saveRes = await fetch("/api/resume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fileName: file.name,
-          parsedText: extractedText,
+          fileName,
+          parsedText: text,
         }),
       });
 
-      if (!res.ok) {
-        throw new Error("Failed to upload parsed resume data to server.");
+      if (!saveRes.ok) {
+        throw new Error("Failed to vectorize and save resume.");
       }
 
-      setIsSuccess(true);
-      setIsAnalyzing(true);
+      // Step 3: Extract Skills & Roles
+      setProcessingStep("Extracting core skills & interview domains...");
+      await analyzeResume(text);
 
-      // 3. AI Analysis
-      try {
-
-
-        const analysisRes = await fetch("/api/resume/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: extractedText }),
-        });
-
-        if (!analysisRes.ok) throw new Error("AI Analysis API returned " + analysisRes.status);
-
-        const data = await analysisRes.json();
-
-
-        setAnalysisResult({
-          skills: Array.isArray(data.skills) ? data.skills : [],
-          strengths: Array.isArray(data.strengths) ? data.strengths : [],
-          weaknesses: Array.isArray(data.weaknesses) ? data.weaknesses : [],
-          suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
-        });
-      } catch (analysisErr: any) {
-        console.error("Analysis Pipeline Issue:", analysisErr);
-        setError("AI analysis failed. Please verify API key configuration.");
-      } finally {
-        setIsAnalyzing(false);
-      }
-
+      setSuccess("Resume processed and vectorized for RAG interview generation!");
+      await fetchResume();
     } catch (err: any) {
-      setError(err.message || "An unexpected error occurred during parsing or uploading.");
+      setError(err?.message || "Failed to process resume.");
     } finally {
-      setIsUploading(false);
-      setIsOcrActive(false);
+      setUploading(false);
+      setProcessingStep("");
+    }
+  };
+
+  const handleDeleteResume = async () => {
+    if (!confirm("Are you sure you want to delete your resume and vector embeddings?")) return;
+
+    try {
+      setLoading(true);
+      await fetch("/api/resume", { method: "DELETE" });
+      setExistingResume(null);
+      setAnalysis(null);
+      setSuccess("Resume removed.");
+    } catch (err: any) {
+      setError("Failed to delete resume.");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="mx-auto max-w-4xl flex flex-col gap-8 w-full animate-fadeInUp">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight text-white mb-2">
-          Resume Intelligence
-        </h2>
-        <p className="text-[13px] text-gray-500">
-          Upload your resume for personalized interview coaching.
+    <div className="max-w-4xl mx-auto pb-16 flex flex-col gap-8">
+      {/* Header */}
+      <div className="border-b border-[var(--border-subtle)] pb-5">
+        <div className="flex items-center gap-2 text-xs font-semibold text-[var(--accent)] uppercase tracking-wider mb-1">
+          <FileText className="h-4 w-4" />
+          Candidate Knowledge Base
+        </div>
+        <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-[var(--text-primary)]">
+          Resume Intelligence & RAG Context
+        </h1>
+        <p className="text-sm text-[var(--text-secondary)] mt-1">
+          Upload your resume to calibrate interview difficulty and enable AI to cross-examine your claims against your verified project history.
         </p>
       </div>
 
-      <Card>
-        <div
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-          className={`relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-14 text-center transition-all duration-300 ${
-            file ? "border-indigo-500/40 bg-indigo-500/[0.03]" : "border-white/[0.08] bg-[#0B0F19] hover:border-white/[0.15]"
-          }`}
-        >
-          <input
-            type="file"
-            accept=".pdf,.txt"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            className="hidden"
-          />
-          
-          <div className="mb-5 rounded-xl bg-white/[0.04] p-4">
-            <UploadCloud className="h-7 w-7 text-gray-500" />
+      {/* Alerts */}
+      {error && (
+        <div className="p-4 rounded-xl bg-[var(--red-subtle)] border border-red-500/20 text-xs text-[var(--red)] flex items-center gap-2.5">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {success && (
+        <div className="p-4 rounded-xl bg-[var(--green-subtle)] border border-green-500/20 text-xs text-[var(--green)] flex items-center gap-2.5">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          <span>{success}</span>
+        </div>
+      )}
+
+      {/* Upload Box */}
+      <div
+        className="rounded-2xl border-2 border-dashed border-[var(--border-strong)] bg-[var(--bg-card)] p-8 text-center hover:border-[var(--accent)] transition-all cursor-pointer group"
+        onClick={() => fileInputRef.current?.click()}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (e.dataTransfer.files?.[0]) handleFileUpload(e.dataTransfer.files[0]);
+        }}
+      >
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept=".pdf,.txt"
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files?.[0]) handleFileUpload(e.target.files[0]);
+          }}
+        />
+
+        <div className="flex flex-col items-center justify-center">
+          <div className="rounded-2xl bg-[var(--accent-subtle)] p-4 text-[var(--accent)] mb-4 transition-transform group-hover:scale-110">
+            {uploading ? (
+              <Loader2 className="h-8 w-8 animate-spin" />
+            ) : (
+              <Upload className="h-8 w-8" />
+            )}
           </div>
 
-          {!file ? (
-            <>
-              <p className="mb-2 text-[15px] font-medium text-white">Drag & drop your resume here</p>
-              <p className="mb-6 text-[13px] text-gray-500">Supports .pdf and .txt files up to 2MB</p>
-              <Button onClick={() => fileInputRef.current?.click()} variant="secondary">
-                Browse Files
-              </Button>
-            </>
-          ) : (
-            <div className="space-y-4">
-              <p className="text-sm text-gray-400">Ready to upload:</p>
-              <div className="inline-flex items-center gap-2 rounded-lg border border-white/[0.06] bg-[#111827] px-4 py-2 text-white text-[13px] font-medium">
-                <FileText className="h-4 w-4 text-gray-400" />
-                {file.name}
-              </div>
-              <div className="pt-2">
-                <Button onClick={() => setFile(null)} variant="secondary" className="text-xs">
-                  Remove File
-                </Button>
-              </div>
+          <h3 className="text-base font-semibold text-[var(--text-primary)]">
+            {uploading ? "Processing Document..." : "Click or Drag & Drop Resume"}
+          </h3>
+          <p className="text-xs text-[var(--text-secondary)] mt-1 max-w-sm">
+            Supported formats: PDF (.pdf) and plain text (.txt). Scanned PDFs are automatically processed via Gemini Vision OCR. Max 8MB.
+          </p>
+
+          {processingStep && (
+            <div className="mt-4 flex items-center gap-2 rounded-full bg-[var(--bg-surface)] px-4 py-1.5 text-xs text-[var(--accent)] font-medium">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <span>{processingStep}</span>
             </div>
           )}
         </div>
+      </div>
 
-        {error && (
-          <div className="mt-6 flex items-center gap-3 rounded-lg border border-red-500/50 bg-red-500/10 p-4 text-sm text-red-400">
-            <AlertCircle className="h-5 w-5 shrink-0" />
-            <p>{error}</p>
-          </div>
-        )}
-
-        {isSuccess && (
-          <div className="mt-6 flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-4 text-[13px] text-emerald-500">
-            <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
-            <p>Upload mapped successfully to configuration base.</p>
-          </div>
-        )}
-
-        <div className="mt-8 flex justify-end">
-          <Button
-            onClick={handleUpload}
-            disabled={!file || isUploading || isAnalyzing}
-            loading={isUploading}
-            variant="primary"
-          >
-            Process Resume
-          </Button>
-        </div>
-      </Card>
-
-      {/* Premium Loading State for AI Analysis */}
-      {(isAnalyzing || isOcrActive) && (
-         <Card className="animate-in zoom-in-95 duration-500 relative border-indigo-500/20 bg-white dark:bg-[#111827] shadow-xl">
-           <div className="absolute inset-0 bg-indigo-500/5 animate-pulse rounded-xl" />
-           <div className="relative z-10 flex flex-col items-center justify-center p-12 text-center">
-             <div className="relative h-16 w-16 mb-6">
-               <svg className="absolute inset-0 w-full h-full text-indigo-500 animate-[spin_1s_linear_infinite]" viewBox="0 0 50 50">
-                 <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray="60 40" />
-               </svg>
-               <div className="absolute inset-0 flex items-center justify-center">
-                  <Target className="h-5 w-5 text-indigo-400" />
-               </div>
-             </div>
-             <h3 className="text-[18px] font-semibold text-gray-900 dark:text-white mb-2">
-                {isOcrActive ? "Activating Neural Recognition..." : "Analyzing Candidate Profile..."}
-             </h3>
-             <p className="text-[13px] text-gray-500 mb-8">
-                Extracting semantic vectors and aligning professional history.
-             </p>
-             <div className="flex flex-col items-start gap-3 w-48 text-left mx-auto">
-               <div className="flex items-center gap-3 text-[13px] font-medium text-gray-400 animate-pulse">
-                 <div className="w-2 h-2 rounded-full bg-indigo-500" />
-                 Parsing document...
-               </div>
-               <div className="flex items-center gap-3 text-[13px] font-medium text-gray-400 animate-pulse" style={{ animationDelay: "0.4s" }}>
-                 <div className="w-2 h-2 rounded-full bg-indigo-500" />
-                 Mapping skills...
-               </div>
-               <div className="flex items-center gap-3 text-[13px] font-medium text-gray-400 animate-pulse" style={{ animationDelay: "0.8s" }}>
-                 <div className="w-2 h-2 rounded-full bg-indigo-500" />
-                 Building profile...
-               </div>
-             </div>
-           </div>
-         </Card>
-      )}
-
-      {/* Render the Preview Card upon successful parsing */}
-      {isSuccess && !isAnalyzing && parsedText && (
-        <div className="animate-in fade-in duration-500 bg-white dark:bg-[#0c0c10] border border-gray-200 dark:border-white/[0.08] rounded-xl p-5">
-           <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[14px] font-semibold text-gray-900 dark:text-white">Source Verification</h3>
-              <div className="bg-indigo-500/10 text-indigo-500 rounded-full px-3 py-1 text-[11px] font-semibold">
-                {parsedText.split(" ").length} words parsed
+      {/* Active Resume Details Card */}
+      {existingResume && (
+        <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-card)] p-6 shadow-sm space-y-6 animate-fadeIn">
+          {/* File Meta Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border-subtle)] pb-4">
+            <div className="flex items-center gap-3">
+              <div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-400">
+                <FileText className="h-5 w-5" />
               </div>
-           </div>
-           <div className="max-h-[240px] overflow-y-auto rounded-lg bg-gray-50 dark:bg-[#111118] border border-gray-200 dark:border-white/[0.06] p-4 text-[12px] leading-[1.8] text-gray-600 dark:text-gray-400 font-mono whitespace-pre-wrap">
-             {parsedText}
-           </div>
-        </div>
-      )}
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+                  {existingResume.file_name}
+                </h3>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Vectorized on{" "}
+                  {new Date(existingResume.created_at).toLocaleDateString("en-US", {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </p>
+              </div>
+            </div>
 
-      {/* Render AI Analysis Results */}
-      {analysisResult && !isAnalyzing && (
-        <Card className="animate-in fade-in duration-500">
-          <h3 className="mb-6 text-[15px] font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-white/[0.06] pb-4">
-            Context Mapping Analysis
-          </h3>
-          <div className="grid gap-8 sm:grid-cols-2">
-            <div>
-              <h4 className="mb-3 font-semibold text-gray-900 dark:text-white text-[13px]">Identified Skills</h4>
-              <div className="flex flex-wrap gap-2">
-                {(analysisResult?.skills || []).length === 0 ? (
-                  <p className="text-[13px] text-gray-500 italic">No skills mapped.</p>
-                ) : (
-                  (analysisResult?.skills || []).map((skill, i) => (
-                    <div key={i} className="rounded-full bg-gray-100 dark:bg-white/[0.04] border border-gray-200 dark:border-white/[0.08] text-gray-600 dark:text-gray-400 text-[12px] px-3 py-1 animate-itemIn" style={{ animationDelay: `${i * 30}ms` }}>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                className="h-8 text-xs"
+              >
+                <RefreshCw className="h-3.5 w-3.5 mr-1" /> Replace
+              </Button>
+              <Button
+                variant="danger"
+                onClick={handleDeleteResume}
+                className="h-8 text-xs"
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+              </Button>
+            </div>
+          </div>
+
+          {/* AI Intelligence Snapshot */}
+          {analysis && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Profile Summary */}
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-[var(--accent)] flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Executive Summary
+                </span>
+                <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                  {analysis.summary}
+                </p>
+                <div className="pt-2 text-[11px] font-semibold text-[var(--text-muted)]">
+                  Experience Tier: <span className="text-[var(--text-primary)]">{analysis.experienceLevel}</span>
+                </div>
+              </div>
+
+              {/* Detected Skills */}
+              <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 space-y-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+                  <Award className="h-3.5 w-3.5" />
+                  Extracted Skills & Technologies
+                </span>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {analysis.skills.map((skill, i) => (
+                    <span
+                      key={i}
+                      className="rounded-md bg-[var(--accent-subtle)] border border-[var(--border-strong)] px-2 py-0.5 text-[11px] font-medium text-[var(--accent)]"
+                    >
                       {skill}
-                    </div>
-                  ))
-                )}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
-            
-            <div>
-              <h4 className="mb-3 font-semibold text-emerald-600 dark:text-emerald-400 text-[13px]">Key Strengths</h4>
-              <ul className="space-y-3">
-                {(analysisResult?.strengths || []).length === 0 ? (
-                  <p className="text-[13px] text-gray-500 italic">No strengths mapped.</p>
-                ) : (
-                  (analysisResult?.strengths || []).map((str, i) => (
-                    <li key={i} className="flex items-start gap-2 text-[13px] text-gray-600 dark:text-gray-400 animate-itemIn" style={{ animationDelay: `${i * 40}ms` }}>
-                      <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                      <div dangerouslySetInnerHTML={{ __html: parseAIContent(str) }} />
-                    </li>
-                  ))
-                )}
-              </ul>
-            </div>
-            
-            <div>
-              <h4 className="mb-3 font-semibold text-amber-600 dark:text-amber-400 text-[13px]">System Weaknesses</h4>
-              <ul className="space-y-3">
-                {(analysisResult?.weaknesses || []).length === 0 ? (
-                  <p className="text-[13px] text-gray-500 italic">No weaknesses mapped.</p>
-                ) : (
-                  (analysisResult?.weaknesses || []).map((weak, i) => (
-                    <li key={i} className="flex items-start gap-2 text-[13px] text-gray-600 dark:text-gray-400 animate-itemIn" style={{ animationDelay: `${i * 50}ms` }}>
-                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-                      <div dangerouslySetInnerHTML={{ __html: parseAIContent(weak) }} />
-                    </li>
-                  ))
-                )}
-              </ul>
-            </div>
-            
-            <div>
-              <h4 className="mb-3 font-semibold text-gray-900 dark:text-gray-300 text-[13px]">Suggestions</h4>
-              <ul className="space-y-3">
-                {(analysisResult?.suggestions || []).length === 0 ? (
-                  <p className="text-[13px] text-gray-500 italic">No suggestions mapped.</p>
-                ) : (
-                  (analysisResult?.suggestions || []).map((point, i) => (
-                    <li key={i} className="flex items-start gap-2 text-[13px] text-gray-600 dark:text-gray-400 animate-itemIn" style={{ animationDelay: `${i * 60}ms` }}>
-                      <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-500" />
-                      <div dangerouslySetInnerHTML={{ __html: parseAIContent(point) }} />
-                    </li>
-                  ))
-                )}
-              </ul>
-            </div>
+          )}
+
+          {/* Expandable Raw Text View */}
+          <div className="border-t border-[var(--border-subtle)] pt-4">
+            <button
+              type="button"
+              onClick={() => setShowFullText(!showFullText)}
+              className="flex w-full items-center justify-between text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            >
+              <span>View Extracted Plain Text ({existingResume.parsed_text.length} chars)</span>
+              <ChevronDown
+                className={`h-4 w-4 transition-transform duration-200 ${
+                  showFullText ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+
+            {showFullText && (
+              <div className="mt-3 p-4 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-xs text-[var(--text-secondary)] whitespace-pre-wrap max-h-96 overflow-y-auto font-mono">
+                {existingResume.parsed_text}
+              </div>
+            )}
           </div>
-        </Card>
+        </div>
       )}
     </div>
   );

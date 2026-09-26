@@ -1,88 +1,77 @@
-import { NextResponse } from "next/server";
-import { generateFollowUp } from "@/services/ai.service";
-import { generateEmbedding } from "@/lib/ai/gemini";
 import { createClient } from "@/lib/supabaseServer";
+import { generateEmbedding } from "@/lib/ai/gemini";
+import { generateFollowUp } from "@/services/ai.service";
 import { pruneOldMessages, truncate } from "@/utils/pruneMessages";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function POST(request: Request) {
+export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient();
     const {
       data: { user },
+      error: authError,
     } = await supabase.auth.getUser();
 
-    if (!user) {
+    if (authError || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json();
-    const { question, answer } = body;
+    const { question, answer, sessionId } = await req.json();
 
-    if (!question || typeof question !== "string") {
+    if (!question || !answer) {
       return NextResponse.json(
-        { error: "Missing or invalid 'question' field" },
+        { error: "Both question and answer are required" },
         { status: 400 }
       );
     }
 
-    if (!answer || typeof answer !== "string") {
-      return NextResponse.json(
-        { error: "Missing or invalid 'answer' field" },
-        { status: 400 }
-      );
-    }
+    const activeSessionId = sessionId || crypto.randomUUID();
 
-    // --- Vector Semantic RAG Retrieval ---
+    // Context retrieval for deeper follow up
     let ragContext = "";
     try {
-      const vectorQuery = await generateEmbedding(answer);
-      
-      const { data: similarChunks, error: rpcError } = await supabase.rpc("match_resume_chunks", {
-        query_embedding: vectorQuery,
-        match_threshold: 0.3,
-        match_count: 3, 
-        auth_user_id: user.id
-      });
-      
-      if (!rpcError && similarChunks && similarChunks.length > 0) {
-        ragContext = similarChunks.map((chunk: any) => chunk.content).join("\n\n---\n\n");
+      if (answer.trim().length > 20) {
+        const queryVector = await generateEmbedding(answer.substring(0, 1000));
+        const { data: chunks } = await supabase.rpc("match_resume_chunks", {
+          query_embedding: queryVector,
+          match_threshold: 0.3,
+          match_count: 2,
+          auth_user_id: user.id,
+        });
+
+        if (chunks && chunks.length > 0) {
+          ragContext = chunks.map((c: { content: string }) => c.content).join("\n---\n");
+        }
       }
-    } catch (ragErr) {
-       console.error("[RAG Semantic Fetch] Follow-up RAG block failed, skipping gracefully.", ragErr);
+    } catch {
+      // Best-effort
     }
 
     const result = await generateFollowUp(question, answer, ragContext);
 
-    try {
-      // Find latest active session for this user
-      const { data: session } = await supabase
-        .from("interview_sessions")
-        .select("id")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .single();
-        
-      if (session && result.follow_up_question) {
-        // Log AI Follow-up Question
-        await supabase.from("interview_messages").insert({
-          session_id: session.id,
-          user_id: user.id,
-          type: "question",
-          content: truncate(result.follow_up_question, 2000)
-        });
-        // Prune oldest rows if user exceeds cap (non-blocking)
-        pruneOldMessages(supabase, user.id);
-      }
-    } catch (sessionErr) {
-       console.error("Failed to map follow-up to active session:", sessionErr);
-    }
+    // Save follow-up to messages
+    await supabase.from("interview_messages").insert({
+      session_id: activeSessionId,
+      user_id: user.id,
+      type: "question",
+      content: truncate(result.follow_up_question, 2000),
+      score: null,
+      metadata: {
+        isFollowUp: true,
+        parentQuestion: truncate(question, 500),
+      },
+    });
 
-    return NextResponse.json(result);
-  } catch (error) {
-    console.error("[/api/follow-up] Error:", error);
+    await pruneOldMessages(supabase, user.id);
+
+    return NextResponse.json({
+      follow_up_question: result.follow_up_question,
+      sessionId: activeSessionId,
+    });
+  } catch (error: any) {
+    console.error("[follow-up] Error:", error);
     return NextResponse.json(
-      { error: "Failed to generate follow-up question" },
+      { error: error?.message || "Failed to generate follow-up" },
       { status: 500 }
     );
   }

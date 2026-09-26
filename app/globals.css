@@ -137,24 +137,30 @@ body {
 }
 .spinner { animation: spin 0.8s linear infinite; }
 
-/* Global Forms/Inputs */
-input, textarea, select {
-  background: var(--bg-input);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  padding: 11px 14px;
-  font-size: 14px;
-  font-family: inherit;
-  color: var(--text-primary);
-  outline: none;
-  width: 100%;
-  box-sizing: border-box;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+@layer base {
+  /* Global Forms/Inputs */
+  input, textarea, select {
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: 11px 14px;
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text-primary);
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  }
+  ::placeholder { color: var(--text-placeholder); }
+  input:focus, textarea:focus, select:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px var(--accent-subtle);
+  }
 }
-::placeholder { color: var(--text-placeholder); }
-input:focus, textarea:focus, select:focus {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px var(--accent-subtle);
+
+.input-icon-left {
+  padding-left: 2.75rem !important;
 }
 
 /* Button Interactions */

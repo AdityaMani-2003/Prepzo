@@ -16,20 +16,31 @@ export function useStreamAI() {
   });
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  const startStream = useCallback(async (role: string, targetCompany?: string) => {
-    // Reset state before starting
-    setStreamState({ text: "", isStreaming: true, error: null });
-    
-    // Setup cancellation token
-    abortControllerRef.current = new AbortController();
+  const startStream = useCallback(
+    async (
+      role: string,
+      targetCompany?: string,
+      roundType?: string,
+      experienceLevel?: string
+    ) => {
+      // Reset state before starting
+      setStreamState({ text: "", isStreaming: true, error: null });
 
-    try {
-      const response = await fetch("/api/stream-question", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, targetCompany: targetCompany || undefined }),
-        signal: abortControllerRef.current.signal,
-      });
+      // Setup cancellation token
+      abortControllerRef.current = new AbortController();
+
+      try {
+        const response = await fetch("/api/stream-question", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role,
+            targetCompany: targetCompany || undefined,
+            roundType: roundType || "mixed",
+            experienceLevel: experienceLevel || "junior",
+          }),
+          signal: abortControllerRef.current.signal,
+        });
 
       if (!response.ok) {
         throw new Error(`Failed to initiate stream: ${response.statusText}`);

@@ -1,356 +1,171 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
-import { Mic, Loader2, Target, CheckCircle, AlertCircle, Clock, PlayCircle } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { Mic, MicOff, Volume2, VolumeX, ArrowLeft, Sparkles, Loader2, StopCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-interface EvaluationResult {
-  score_breakdown: {
-    clarity: number;
-    technical: number;
-    communication: number;
-  };
-  strengths: string[];
-  weaknesses: string[];
-  improved_answer: string;
-  why_this_score: string;
-}
-
-const TOTAL_QUESTIONS = 5;
-const SECONDS_PER_QUESTION = 180; // 3 minutes
+import { useVoice } from "@/hooks/useVoice";
 
 export default function LiveInterviewPage() {
-  const [role, setRole] = useState("");
-  const [isLive, setIsLive] = useState(false);
-  const [isCompleted, setIsCompleted] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [role, setRole] = useState("Full Stack Engineer");
+  const [sessionActive, setSessionActive] = useState(false);
+  const [aiStatus, setAiStatus] = useState<"idle" | "speaking" | "listening" | "thinking">("idle");
+  const [currentQuestion, setCurrentQuestion] = useState("");
+  const [candidateResponse, setCandidateResponse] = useState("");
+  const [sessionElapsed, setSessionElapsed] = useState(0);
 
-  const [questionCount, setQuestionCount] = useState(0);
-  const [questionData, setQuestionData] = useState<{
-    question: string;
-    difficulty: string;
-    topic: string;
-  } | null>(null);
-  const [answer, setAnswer] = useState("");
-  const [sessionResults, setSessionResults] = useState<EvaluationResult[]>([]);
+  const {
+    isListening,
+    transcript,
+    toggleListening,
+    speakText,
+    stopSpeaking,
+    isSpeaking,
+  } = useVoice();
 
-  const [timeLeft, setTimeLeft] = useState(SECONDS_PER_QUESTION);
-  const isSubmitting = useRef(false);
-
-  // Timer logic
+  // Sync candidate speech
   useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (isLive && !isCompleted && !loading && questionData) {
-      timer = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            // Auto submit when time runs out
-            if (!isSubmitting.current) {
-              handleAutoSubmit();
-            }
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+    if (isListening) {
+      if (transcript) setCandidateResponse(transcript);
+      setAiStatus("listening");
+    } else if (isSpeaking) {
+      setAiStatus("speaking");
     }
-    return () => clearInterval(timer);
-  }, [isLive, isCompleted, loading, questionData]);
+  }, [isListening, isSpeaking, transcript]);
 
-  const handleAutoSubmit = () => {
-    const submitBtn = document.getElementById("submit-answer-btn");
-    if (submitBtn) {
-      submitBtn.click();
+  // Timer
+  useEffect(() => {
+    let t: any;
+    if (sessionActive) {
+      t = setInterval(() => setSessionElapsed((prev) => prev + 1), 1000);
     }
-  };
+    return () => clearInterval(t);
+  }, [sessionActive]);
 
-  const fetchNextQuestion = async (currentRole: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/question", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: currentRole }),
-      });
-
-      if (!res.ok) throw new Error("Failed to generate next question.");
-
-      const data = await res.json();
-      setQuestionData(data);
-      setAnswer("");
-      setTimeLeft(SECONDS_PER_QUESTION);
-      setQuestionCount((c) => c + 1);
-    } catch (err: any) {
-      setError(err.message || "Failed to load question.");
-      setIsLive(false); // abort session safely
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const startSession = async () => {
-    if (!role.trim()) return;
-    setIsLive(true);
-    await fetchNextQuestion(role);
-  };
-
-  const submitAnswer = async () => {
-    if (!questionData || isSubmitting.current) return;
+  const handleStartLive = async () => {
+    setSessionActive(true);
+    setAiStatus("thinking");
+    setCurrentQuestion("Hello! I'm your AI interviewer. Let's begin. Can you introduce yourself and talk about the most technically challenging project you've led recently?");
     
-    isSubmitting.current = true;
-    setLoading(true);
-    setError(null);
-
-    // Save final answer state to send
-    const finalAnswer = answer.trim() || "No answer provided.";
-
-    try {
-      const res = await fetch("/api/evaluate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: questionData.question, answer: finalAnswer, topic: questionData.topic }),
-      });
-
-      if (!res.ok) throw new Error("Failed to evaluate answer.");
-
-      const resultData = await res.json();
-      setSessionResults((prev) => [...prev, resultData]);
-
-      if (questionCount >= TOTAL_QUESTIONS) {
-        setIsCompleted(true);
-      } else {
-        await fetchNextQuestion(role);
-      }
-    } catch (err: any) {
-      setError(err.message || "An error occurred submitting your answer.");
-    } finally {
-      isSubmitting.current = false;
-      setLoading(false);
-    }
+    setTimeout(() => {
+      setAiStatus("speaking");
+      speakText("Hello! I'm your AI interviewer. Let's begin. Can you introduce yourself and talk about the most technically challenging project you've led recently?");
+    }, 1000);
   };
 
-  // Derived final scorecard statistics
-  const finalStats = useMemo(() => {
-    if (sessionResults.length === 0) return null;
-
-    let totalClarity = 0;
-    let totalTechnical = 0;
-    let totalCommunication = 0;
-    const strengths = new Set<string>();
-    const weaknesses = new Set<string>();
-
-    sessionResults.forEach((res) => {
-      totalClarity += res.score_breakdown.clarity;
-      totalTechnical += res.score_breakdown.technical;
-      totalCommunication += res.score_breakdown.communication || (res.score_breakdown as any).structure || 0;
-      
-      res.strengths.forEach(s => strengths.add(s));
-      res.weaknesses.forEach(w => weaknesses.add(w));
-    });
-
-    const count = sessionResults.length;
-    const avgClarity = Math.round(totalClarity / count);
-    const avgTechnical = Math.round(totalTechnical / count);
-    const avgComm = Math.round(totalCommunication / count);
-    const avgOverall = Math.round((avgClarity + avgTechnical + avgComm) / 3);
-
-    return {
-      avgClarity,
-      avgTechnical,
-      avgComm,
-      avgOverall,
-      strengths: Array.from(strengths).slice(0, 5), // top 5
-      weaknesses: Array.from(weaknesses).slice(0, 5) // top 5
-    };
-  }, [sessionResults]);
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  const handleEndLive = () => {
+    setSessionActive(false);
+    stopSpeaking();
+    if (isListening) toggleListening();
+    setAiStatus("idle");
   };
 
-  if (isCompleted && finalStats) {
-    return (
-      <div className="mx-auto max-w-4xl space-y-8 animate-fadeInUp">
-        <div className="text-center">
-          <div className="mx-auto mb-4 inline-flex items-center justify-center rounded-2xl bg-emerald-500/10 p-4">
-            <CheckCircle className="h-10 w-10 text-emerald-400" />
-          </div>
-          <h1 className="text-2xl font-semibold text-white">Live Session Complete</h1>
-          <p className="mt-2 text-lg text-gray-400">You completed the {TOTAL_QUESTIONS}-question marathon for {role}.</p>
-        </div>
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
 
-        <Card>
-          <h2 className="mb-6 text-xl font-semibold text-white text-center">Final Scorecard</h2>
-          
-          <div className="mb-8 grid gap-4 sm:grid-cols-4 text-center">
-            <div className="rounded-xl bg-[#0B0F19] border border-white/[0.06] p-4">
-              <div className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Overall Score</div>
-              <div className="mt-1 text-3xl font-bold text-emerald-400">{finalStats.avgOverall}/10</div>
-            </div>
-            <div className="rounded-xl bg-[#0B0F19] border border-white/[0.06] p-4">
-              <div className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Avg Clarity</div>
-              <div className="mt-1 text-2xl font-bold text-white">{finalStats.avgClarity}/10</div>
-            </div>
-            <div className="rounded-xl bg-[#0B0F19] border border-white/[0.06] p-4">
-              <div className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Avg Technical</div>
-              <div className="mt-1 text-2xl font-bold text-white">{finalStats.avgTechnical}/10</div>
-            </div>
-            <div className="rounded-xl bg-[#0B0F19] border border-white/[0.06] p-4">
-              <div className="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Avg Communication</div>
-              <div className="mt-1 text-2xl font-bold text-white">{finalStats.avgComm}/10</div>
-            </div>
-          </div>
-
-          <div className="grid gap-8 sm:grid-cols-2">
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-6">
-              <h3 className="mb-4 text-lg font-medium text-emerald-400">Key Strengths Demonstrated</h3>
-              <ul className="space-y-3">
-                {finalStats.strengths.map((str, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-emerald-100/80">
-                    <span className="mt-1 block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-                    {str}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-6">
-              <h3 className="mb-4 text-lg font-medium text-amber-400">Areas to Improve</h3>
-              <ul className="space-y-3">
-                {finalStats.weaknesses.map((weak, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-amber-100/80">
-                    <span className="mt-1 block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
-                    {weak}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          <div className="mt-8 flex justify-center">
-             <Button
-                onClick={() => window.location.reload()}
-                className="bg-white text-black hover:bg-gray-200"
-              >
-                Start New Session
-              </Button>
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
-  // Live Exam View
-  if (isLive) {
-    return (
-      <div className="mx-auto max-w-3xl space-y-6 animate-fadeInUp">
-        <div className="flex items-center justify-between border-b border-white/[0.06] pb-4">
-          <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-3 py-1 text-[13px] font-medium text-indigo-300">
-            Question {questionCount} of {TOTAL_QUESTIONS}
-          </div>
-          
-          <div className={`inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-[13px] font-bold tracking-widest ${
-            timeLeft < 30 ? "bg-red-500/15 text-red-400 timer-warning" : timeLeft < 60 ? "bg-orange-500/10 text-orange-400" : "bg-[#111827] text-white"
-          }`}>
-            <Clock className="h-4 w-4" />
-            {formatTime(timeLeft)}
-          </div>
-        </div>
-
-        {error && (
-          <div className="flex items-center gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
-            <AlertCircle className="h-5 w-5" />
-            <p>{error}</p>
-          </div>
-        )}
-
-        {loading && !questionData ? (
-          <div className="flex flex-col items-center justify-center py-24 text-gray-500">
-            <Loader2 className="mb-4 h-8 w-8 animate-spin text-purple-400" />
-            <p>Preparing next question...</p>
-          </div>
-        ) : questionData && (
-          <Card className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
-            <div>
-              <div className="mb-3 inline-flex items-center gap-2 text-xs font-medium text-gray-400">
-                <Target className="h-3.5 w-3.5" />
-                {questionData.topic} • {questionData.difficulty}
-              </div>
-              <h2 className="text-xl font-medium leading-relaxed text-white">
-                {questionData.question}
-              </h2>
-            </div>
-
-            <div className="space-y-4">
-              <label htmlFor="answer" className="block text-sm font-medium text-gray-300">
-                Your Answer <span className="text-gray-500 font-normal ml-2">({loading ? "Locked" : "Live"})</span>
-              </label>
-              <textarea
-                id="answer"
-                value={answer}
-                onChange={(e) => setAnswer(e.target.value)}
-                disabled={loading}
-                placeholder="Type your answer here..."
-                rows={6}
-                className="input-glow w-full resize-none rounded-xl border border-white/[0.08] bg-[#0B0F19] p-4 text-[13px] text-white placeholder-gray-600 outline-none transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-              <div className="flex justify-end">
-                <Button
-                  id="submit-answer-btn"
-                  onClick={submitAnswer}
-                  disabled={loading}
-                  loading={loading}
-                  className="px-8 bg-purple-600 hover:bg-purple-500"
-                >
-                  Submit Answer
-                </Button>
-              </div>
-            </div>
-          </Card>
-        )}
-      </div>
-    );
-  }
-
-  // Initial Setup View
   return (
-    <div className="mx-auto max-w-xl text-center pt-12 animate-fadeInUp">
-      <div className="mx-auto mb-6 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-500/10 border border-indigo-500/20">
-        <Mic className="h-8 w-8 text-indigo-400" />
+    <div className="flex flex-col items-center justify-between min-h-[80vh] max-w-3xl mx-auto py-8 text-center">
+      {/* Top Header */}
+      <div className="w-full flex items-center justify-between border-b border-[var(--border-subtle)] pb-4">
+        <Link href="/interview" className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+          <ArrowLeft className="h-4 w-4" />
+          <span>Exit Live Mode</span>
+        </Link>
+
+        <div className="flex items-center gap-2">
+          <span className="flex h-2 w-2 rounded-full bg-red-500 animate-ping" />
+          <span className="text-xs font-mono font-semibold text-[var(--text-primary)]">
+            {formatTime(sessionElapsed)}
+          </span>
+        </div>
       </div>
-      <h1 className="mb-3 text-2xl font-bold text-white tracking-tight">Live Interview</h1>
-      <p className="mb-8 text-[14px] text-gray-400 leading-relaxed max-w-md mx-auto">
-        Face <strong className="text-white">{TOTAL_QUESTIONS} timed questions</strong> for your target role. You have <strong className="text-white">{formatTime(SECONDS_PER_QUESTION)}</strong> per question before auto-submit.
-      </p>
 
-      <Card className="text-left">
-        <label htmlFor="role-setup" className="mb-2 block text-[13px] font-medium text-gray-400">
-          What role are you preparing for?
-        </label>
-        <input
-          id="role-setup"
-          type="text"
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          placeholder="e.g. Senior Machine Learning Engineer"
-          className="input-glow w-full rounded-lg border border-white/[0.08] bg-[#0B0F19] px-4 py-2.5 text-[13px] text-white placeholder-gray-600 outline-none transition-all duration-200 mb-5"
-        />
+      {/* Main Avatar / Orb Area */}
+      <div className="flex flex-col items-center my-auto">
+        <div className="relative flex items-center justify-center mb-8">
+          {/* Animated Glow Rings */}
+          <div
+            className={`absolute h-48 w-48 rounded-full transition-all duration-700 ${
+              aiStatus === "speaking"
+                ? "bg-purple-600/30 scale-125 blur-xl animate-pulse"
+                : aiStatus === "listening"
+                ? "bg-emerald-500/20 scale-110 blur-lg"
+                : "bg-indigo-600/10 scale-100 blur-md"
+            }`}
+          />
 
-        <Button
-          onClick={startSession}
-          disabled={!role.trim() || loading}
-          loading={loading}
-          className="w-full"
-        >
-          <PlayCircle className="h-4 w-4" />
-          Start Live Interview
-        </Button>
-      </Card>
+          {/* Central AI Orb */}
+          <div
+            className={`relative flex h-32 w-32 items-center justify-center rounded-full border border-white/10 shadow-2xl transition-all duration-500 ${
+              aiStatus === "speaking"
+                ? "bg-gradient-to-tr from-indigo-600 to-purple-500 scale-105"
+                : aiStatus === "listening"
+                ? "bg-gradient-to-tr from-emerald-600 to-teal-500"
+                : "bg-gradient-to-tr from-slate-800 to-slate-900"
+            }`}
+          >
+            <Sparkles className="h-10 w-10 text-white animate-spin-slow" />
+          </div>
+        </div>
+
+        {/* Status indicator */}
+        <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-strong)] bg-[var(--bg-surface)] px-4 py-1.5 text-xs font-semibold text-[var(--text-primary)] mb-4">
+          {aiStatus === "idle" && "Ready to start live session"}
+          {aiStatus === "thinking" && "AI is preparing question..."}
+          {aiStatus === "speaking" && "AI is speaking..."}
+          {aiStatus === "listening" && "Listening to your answer..."}
+        </div>
+
+        {/* Question Prompt */}
+        {currentQuestion && (
+          <p className="max-w-xl text-base md:text-lg font-medium text-[var(--text-primary)] leading-relaxed mb-6">
+            &ldquo;{currentQuestion}&rdquo;
+          </p>
+        )}
+
+        {/* Real-time Candidate Transcript */}
+        {candidateResponse && (
+          <div className="max-w-lg rounded-xl bg-[var(--bg-card)] border border-[var(--border-default)] p-4 text-xs text-[var(--text-secondary)] leading-relaxed italic">
+            {candidateResponse}
+          </div>
+        )}
+      </div>
+
+      {/* Control Bar */}
+      <div className="w-full flex items-center justify-center gap-4 pt-6 border-t border-[var(--border-subtle)]">
+        {!sessionActive ? (
+          <Button
+            variant="primary"
+            onClick={handleStartLive}
+            className="h-12 px-8 text-sm font-semibold shadow-[var(--shadow-glow)]"
+          >
+            <Mic className="h-4 w-4 mr-2" />
+            Begin Live Voice Interview
+          </Button>
+        ) : (
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={toggleListening}
+              className={`rounded-full p-4 transition-all ${
+                isListening
+                  ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse"
+                  : "bg-[var(--bg-card)] text-[var(--text-secondary)] border border-[var(--border-default)]"
+              }`}
+            >
+              {isListening ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
+            </button>
+
+            <Button variant="danger" onClick={handleEndLive} className="h-11 px-5 text-xs font-semibold">
+              <StopCircle className="h-4 w-4 mr-1.5" />
+              End Live Session
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

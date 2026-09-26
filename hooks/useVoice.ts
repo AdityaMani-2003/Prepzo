@@ -10,7 +10,10 @@ declare global {
 export function useVoice() {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [supported, setSupported] = useState(true);
+  const [supported, setSupported] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  });
   const recognitionRef = useRef<any>(null);
 
   // Tracks whether the user WANTS to be listening.
@@ -27,7 +30,6 @@ export function useVoice() {
 
     if (!SpeechRec) {
       console.warn("[useVoice] SpeechRecognition not supported in this browser");
-      setSupported(false);
       return;
     }
 

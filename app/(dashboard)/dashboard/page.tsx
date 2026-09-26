@@ -1,202 +1,443 @@
-import { createClient } from "@/lib/supabaseServer";
-import { redirect } from "next/navigation";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
-  TrendingUp, FileText, MessageSquare, Mic,
-  Target, Award, AlertCircle, ArrowUpRight, Sparkles,
+  MessageSquare,
+  FileText,
+  TrendingUp,
+  Clock,
+  Sparkles,
+  ArrowRight,
+  Target,
+  Award,
+  BarChart2,
+  CheckCircle2,
+  AlertTriangle,
+  Zap,
 } from "lucide-react";
-import { DashboardClientExtras } from "@/components/DashboardClientExtras";
+import { createClient } from "@/lib/supabaseServer";
 import { StreakCard } from "@/components/StreakCard";
+import { DashboardClientExtras } from "@/components/DashboardClientExtras";
+import { Button } from "@/components/ui/button";
+
+export const metadata = {
+  title: "Dashboard — Prepzo",
+};
 
 export default async function DashboardPage() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  let latestResume: any = null;
-  let evals: any[] | null = null;
-  try {
-    const { data, error } = await supabase
-      .from("resumes")
-      .select("file_name, parsed_text, created_at")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) console.error("Resume fetch error:", error);
-    latestResume = data;
-  } catch (err) {
-    console.error("Resume fetch exception:", err);
+  if (!user) {
+    redirect("/login");
   }
 
-  try {
-    const { data, error } = await supabase
-      .from("interview_messages")
-      .select("score, metadata, created_at")
-      .eq("user_id", user.id)
-      .eq("type", "evaluation")
-      .order("created_at", { ascending: false })
-      .limit(20);
-    if (error) console.error("Evals fetch error:", error);
-    evals = data;
-  } catch (err) {
-    console.error("Evals fetch exception:", err);
-  }
+  // 1. Fetch user resume
+  const { data: resume } = await supabase
+    .from("resumes")
+    .select("id, file_name, created_at, parsed_text")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  // Skills extraction
-  const techList = ["JavaScript", "TypeScript", "React", "Node.js", "Python", "Java", "C++", "AWS", "Docker", "SQL", "Next.js", "GraphQL", "Tailwind", "Kubernetes", "Azure", "Go", "Rust"];
-  const extractedSkills = techList.filter((s) => {
-    if (typeof latestResume?.parsed_text !== "string") return false;
-    try { return new RegExp(`\\b${s}\\b`, "i").test(latestResume.parsed_text); } catch { return false; }
-  }).slice(0, 8);
+  // 2. Fetch all evaluations for real ELO & stats calculation
+  const { data: evals } = await supabase
+    .from("interview_messages")
+    .select("id, session_id, score, content, metadata, created_at")
+    .eq("user_id", user.id)
+    .eq("type", "evaluation")
+    .order("created_at", { ascending: true });
 
-  // Performance metrics
-  const total = evals?.length || 0;
-  const lastScore = evals?.[0]?.score || 0;
+  // 3. Fetch all messages to identify sessions & streak dates
+  const { data: allMessages } = await supabase
+    .from("interview_messages")
+    .select("id, session_id, type, created_at, metadata")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(150);
 
-  let elo = 1200;
-  const sorted = [...(evals || [])].reverse();
-  for (const ev of sorted) elo = Math.round(elo + 20 * ((ev.score || 0) / 10 - 0.5));
+  // 4. Fetch skill metrics
+  const { data: skillMetrics } = await supabase
+    .from("skill_metrics")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("score", { ascending: false });
 
-  let strongest = "—", weakest = "—";
-  if (total > 0) {
-    const sums = { clarity: 0, technical: 0, communication: 0 };
-    let count = 0;
-    for (const ev of evals!) {
-      const b = ev.metadata?.score_breakdown;
-      if (b) { sums.clarity += b.clarity || 0; sums.technical += b.technical || 0; sums.communication += b.communication || b.structure || 0; count++; }
+  // Calculations
+  const totalEvaluations = evals?.length || 0;
+  let currentElo = 1200; // Baseline
+  let totalScoreSum = 0;
+
+  evals?.forEach((e) => {
+    if (e.score != null) {
+      const numericScore = Number(e.score);
+      totalScoreSum += numericScore;
+      currentElo += 20 * (numericScore / 10 - 0.5);
     }
-    if (count > 0) {
-      const avgs = { Clarity: sums.clarity / count, Technical: sums.technical / count, Communication: sums.communication / count };
-      const entries = Object.entries(avgs);
-      strongest = entries.reduce((a, b) => (a[1] > b[1] ? a : b))[0];
-      weakest = entries.reduce((a, b) => (a[1] < b[1] ? a : b))[0];
-    }
-  }
+  });
 
-  const resumeDate = latestResume?.created_at
-    ? new Date(latestResume.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-    : null;
+  currentElo = Math.max(800, Math.round(currentElo));
+  const averageScore = totalEvaluations > 0 ? (totalScoreSum / totalEvaluations).toFixed(1) : "—";
+
+  // Unique session aggregation
+  const sessionMap = new Map<string, {
+    sessionId: string;
+    role: string;
+    date: string;
+    scores: number[];
+  }>();
+
+  allMessages?.forEach((msg) => {
+    const sId = msg.session_id;
+    if (!sessionMap.has(sId)) {
+      sessionMap.set(sId, {
+        sessionId: sId,
+        role: msg.metadata?.role || msg.metadata?.topic || "Technical Interview",
+        date: msg.created_at,
+        scores: [],
+      });
+    }
+    const session = sessionMap.get(sId)!;
+    if (msg.type === "evaluation" && msg.metadata?.score_breakdown) {
+      const breakdown = msg.metadata.score_breakdown;
+      const avg = ((breakdown.clarity || 7) + (breakdown.technical || 7) + (breakdown.communication || 7)) / 3;
+      session.scores.push(avg);
+    }
+  });
+
+  const recentSessions = Array.from(sessionMap.values()).slice(0, 5);
+
+  // Distinct dates for streak tracker
+  const evalDates = allMessages?.map((m) => m.created_at) || [];
+
+  const userName = user.user_metadata?.full_name || user.email?.split("@")[0] || "Candidate";
 
   return (
-    <div className="mx-auto w-full max-w-6xl flex flex-col gap-7 animate-fadeInUp">
-      {/* Onboarding modal (client) */}
-      <DashboardClientExtras hasResume={!!latestResume} />
+    <div className="flex flex-col gap-8 max-w-7xl mx-auto pb-12">
+      <DashboardClientExtras hasResume={!!resume} />
 
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Welcome back</h1>
-        <p className="text-[13px] text-gray-500 mt-1">Your interview preparation at a glance.</p>
+      {/* Header Banner */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--border-subtle)] pb-6">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-semibold text-[var(--accent)] uppercase tracking-wider mb-1">
+            <Zap className="h-3.5 w-3.5" />
+            Interview Readiness Command Center
+          </div>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-[var(--text-primary)]">
+            Welcome back, {userName}
+          </h1>
+          <p className="text-sm text-[var(--text-secondary)] mt-1">
+            {totalEvaluations > 0
+              ? `You've completed ${totalEvaluations} evaluated interview responses. Keep practicing to boost your ELO.`
+              : "Get ready to ace your technical interview. Start by completing your profile or launching a mock interview."}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Link href="/interview">
+            <Button variant="primary" className="h-10 px-5 shadow-[var(--shadow-glow)]">
+              <MessageSquare className="h-4 w-4" />
+              New Interview
+            </Button>
+          </Link>
+          <Link href="/interview/live">
+            <Button variant="outline" className="h-10 px-4">
+              Live Voice Mode
+            </Button>
+          </Link>
+        </div>
       </div>
 
-      {/* Performance Snapshot */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 stagger">
-        {[
-          { label: "Career ELO", value: total > 0 ? elo : "—", icon: TrendingUp, color: "indigo" },
-          { label: "Last Score", value: lastScore || "—", suffix: lastScore ? "/10" : "", icon: Target, color: "emerald" },
-          { label: "Strongest", value: strongest, icon: Award, color: "blue" },
-          { label: "Needs Work", value: weakest, icon: AlertCircle, color: "orange" },
-        ].map((item) => (
-          <div key={item.label} className={`card-interactive rounded-[var(--radius-xl)] bg-[var(--bg-card)] border border-[var(--border-default)] p-4 hover:border-${item.color}-500/20 transition-all duration-200`}>
-            <div className="flex justify-between items-start mb-2.5">
-              <span className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{item.label}</span>
-              <item.icon className={`h-3.5 w-3.5 text-${item.color}-400`} />
-            </div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold text-gray-900 dark:text-white">{item.value}</span>
-              {item.suffix && <span className="text-[11px] text-gray-400 dark:text-gray-600">{item.suffix}</span>}
+      {/* Metric Cards Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* ELO Rating Card */}
+        <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-card)] p-5 flex flex-col justify-between card-interactive">
+          <div className="flex items-center justify-between text-[var(--text-secondary)]">
+            <span className="text-xs font-medium uppercase tracking-wider">Current ELO</span>
+            <div className="rounded-lg bg-indigo-500/10 p-2 text-indigo-400">
+              <Award className="h-4 w-4" />
             </div>
           </div>
-        ))}
-      </div>
-
-      {/* Quick Actions + Streak (Left) & Resume (Right) */}
-      <div className="grid gap-5 lg:grid-cols-5">
-        
-        {/* Left Column Stack: Quick Actions */}
-        <div className="lg:col-span-3 flex flex-col gap-5">
-          {/* Quick Actions */}
-          <div className="rounded-[var(--radius-xl)] bg-[var(--bg-card)] border border-[var(--border-default)] p-5 h-full">
-            <h2 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">Quick Actions</h2>
-            <div className="grid gap-3 sm:grid-cols-3 stagger">
-              {[
-                { href: "/interview", label: "Practice Interview", desc: "AI-powered text evaluation", icon: MessageSquare, color: "indigo" },
-                { href: "/interview/live", label: "Live Interview", desc: "Voice-activated mock session", icon: Mic, color: "emerald" },
-                { href: "/resume", label: latestResume ? "Update Resume" : "Upload Resume", desc: "Personalize your coaching", icon: FileText, color: "purple" },
-              ].map((item) => (
-                <Link key={item.href} href={item.href}
-                  className={`card-premium flex flex-col items-start gap-2.5 rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)] p-4 transition-all duration-200 hover:border-${item.color}-500/25 hover:shadow-lg hover:shadow-${item.color}-500/5 group`}
-                >
-                  <div className={`rounded-lg bg-${item.color}-500/10 p-2 text-${item.color}-400 group-hover:bg-${item.color}-500/20 transition-colors`}>
-                    <item.icon className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <span className="block text-[13px] font-semibold text-gray-900 dark:text-white mb-0.5">{item.label}</span>
-                    <span className="text-[11px] text-gray-500 dark:text-gray-600 leading-snug">{item.desc}</span>
-                  </div>
-                  <ArrowUpRight className={`h-3 w-3 text-gray-400 dark:text-gray-700 group-hover:text-${item.color}-400 transition-colors mt-auto`} />
-                </Link>
-              ))}
-            </div>
+          <div className="mt-4 flex items-baseline gap-2">
+            <span className="text-3xl font-bold text-[var(--text-primary)]">{currentElo}</span>
+            <span className="text-xs text-[var(--text-muted)]">baseline 1200</span>
+          </div>
+          <div className="mt-3 flex items-center gap-1.5 text-xs text-indigo-400">
+            <TrendingUp className="h-3.5 w-3.5" />
+            <span>Updated with every verified answer</span>
           </div>
         </div>
 
-        {/* Right Column Stack: Resume */}
-        <div className="lg:col-span-2 flex flex-col gap-5">
-          {/* Resume Card */}
-          <div className="card-interactive rounded-[var(--radius-xl)] bg-[var(--bg-card)] border border-[var(--border-default)] p-5 flex flex-col h-full">
-            <h2 className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">Resume</h2>
-            {latestResume ? (
-              <div className="flex flex-1 flex-col justify-between">
-                <div>
-                  <div className="inline-flex items-center gap-1.5 mb-3 px-2 py-0.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 text-[10px] font-semibold text-emerald-400 uppercase tracking-wide">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    Active
-                  </div>
-                  <p className="text-[13px] font-medium text-gray-900 dark:text-white truncate mb-0.5" title={latestResume.file_name}>{latestResume.file_name}</p>
-                  {resumeDate && <p className="text-[11px] text-gray-500 dark:text-gray-600 mb-3">Updated {resumeDate}</p>}
-                  <div className="flex flex-wrap gap-1">
-                    {extractedSkills.map((s) => (
-                      <span key={s} className="rounded-md border border-gray-200 dark:border-white/[0.06] bg-gray-50 dark:bg-white/[0.03] px-2 py-0.5 text-[10px] text-gray-500 dark:text-gray-400 font-medium">{s}</span>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex gap-2 mt-4">
-                  <Link href="/resume" className="flex-1 inline-flex items-center justify-center rounded-lg bg-gray-100 dark:bg-white/[0.05] border border-gray-200 dark:border-white/[0.08] px-3 py-1.5 text-[12px] font-medium text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-white/[0.08] transition-all">
-                    Update Resume
-                  </Link>
-                </div>
+        {/* Avg Performance */}
+        <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-card)] p-5 flex flex-col justify-between card-interactive">
+          <div className="flex items-center justify-between text-[var(--text-secondary)]">
+            <span className="text-xs font-medium uppercase tracking-wider">Avg Answer Score</span>
+            <div className="rounded-lg bg-emerald-500/10 p-2 text-emerald-400">
+              <BarChart2 className="h-4 w-4" />
+            </div>
+          </div>
+          <div className="mt-4 flex items-baseline gap-2">
+            <span className="text-3xl font-bold text-[var(--text-primary)]">{averageScore}</span>
+            <span className="text-xs text-[var(--text-muted)]">/ 10.0</span>
+          </div>
+          <div className="mt-3 text-xs text-[var(--text-secondary)]">
+            {totalEvaluations} evaluated answers
+          </div>
+        </div>
+
+        {/* Resume RAG Status */}
+        <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-card)] p-5 flex flex-col justify-between card-interactive">
+          <div className="flex items-center justify-between text-[var(--text-secondary)]">
+            <span className="text-xs font-medium uppercase tracking-wider">Resume Context</span>
+            <div className="rounded-lg bg-purple-500/10 p-2 text-purple-400">
+              <FileText className="h-4 w-4" />
+            </div>
+          </div>
+          <div className="mt-4">
+            {resume ? (
+              <div>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  RAG Vectorized
+                </span>
+                <p className="text-xs text-[var(--text-muted)] mt-2 truncate max-w-[200px]">
+                  {resume.file_name}
+                </p>
               </div>
             ) : (
-              <div className="flex flex-1 flex-col items-start justify-center">
-                <div className="rounded-lg bg-gray-100 dark:bg-white/[0.03] p-2.5 mb-3">
-                  <FileText className="h-5 w-5 text-gray-400 dark:text-gray-600" />
-                </div>
-                <p className="text-[13px] font-medium text-gray-900 dark:text-white mb-0.5">No resume yet</p>
-                <p className="text-[11px] text-gray-500 dark:text-gray-600 mb-4">Upload your resume for personalized coaching</p>
-                <Link href="/resume" className="inline-flex items-center justify-center rounded-lg bg-indigo-500 px-4 py-2 text-[12px] font-semibold text-white hover:bg-indigo-400 transition-all">
-                  Upload Resume
+              <div>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-400">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  No Resume
+                </span>
+                <Link
+                  href="/resume"
+                  className="block text-xs font-medium text-[var(--accent)] hover:underline mt-2"
+                >
+                  Upload now for targeted questions →
                 </Link>
               </div>
             )}
           </div>
+          <div className="mt-3 text-xs text-[var(--text-muted)]">
+            {resume ? "Powering personalized questions" : "Generic questions active"}
+          </div>
         </div>
+
+        {/* Streak Component */}
+        <StreakCard evalDates={evalDates} />
       </div>
 
-      {/* Full-width Streak Card spanning across the entire layout */}
-      <StreakCard evalDates={evals?.map(e => e.created_at) || []} />
+      {/* Main Grid: Quick Practice + Recent Sessions */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left 2 Cols: Quick Interview Presets */}
+        <div className="lg:col-span-2 flex flex-col gap-6">
+          <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-card)] p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-base font-semibold text-[var(--text-primary)]">
+                  Launch Quick Practice
+                </h2>
+                <p className="text-xs text-[var(--text-secondary)]">
+                  Select a domain to start an AI mock interview tailored to industry standards.
+                </p>
+              </div>
+              <Sparkles className="h-4 w-4 text-[var(--accent)]" />
+            </div>
 
-      {/* Analytics CTA */}
-      <div className="rounded-xl bg-gradient-to-r from-indigo-500/[0.07] to-purple-500/[0.07] border border-indigo-500/[0.1] p-5 flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2 mb-0.5">
-            <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
-            <h3 className="text-[13px] font-semibold text-gray-900 dark:text-white">Performance Analytics</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {[
+                { title: "Frontend Developer", desc: "React, Next.js, Web Vitals, DOM" },
+                { title: "Backend Engineer", desc: "APIs, PostgreSQL, Microservices, Caching" },
+                { title: "Full Stack Engineer", desc: "End-to-end architectures & data flow" },
+                { title: "System Design", desc: "Scalability, load balancing, distributed DBs" },
+                { title: "DevOps & Cloud", desc: "CI/CD, Kubernetes, Docker, AWS" },
+                { title: "Behavioral & Leadership", desc: "STAR method, conflict, ownership" },
+              ].map((rolePreset) => (
+                <Link
+                  key={rolePreset.title}
+                  href={`/interview?role=${encodeURIComponent(rolePreset.title)}`}
+                  className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3.5 hover:border-[var(--accent)] hover:bg-[var(--accent-subtle)] transition-all flex flex-col justify-between group"
+                >
+                  <div>
+                    <h3 className="text-sm font-semibold text-[var(--text-primary)] group-hover:text-[var(--accent)] transition-colors">
+                      {rolePreset.title}
+                    </h3>
+                    <p className="text-xs text-[var(--text-muted)] mt-1 line-clamp-2">
+                      {rolePreset.desc}
+                    </p>
+                  </div>
+                  <div className="mt-3 flex items-center text-xs font-medium text-[var(--accent)] opacity-0 group-hover:opacity-100 transition-opacity">
+                    Start session <ArrowRight className="h-3 w-3 ml-1" />
+                  </div>
+                </Link>
+              ))}
+            </div>
           </div>
-          <p className="text-[12px] text-gray-500 dark:text-gray-400">Track your ELO trajectory and skill distribution.</p>
+
+          {/* Recent Interview History */}
+          <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-card)] p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-semibold text-[var(--text-primary)]">
+                Recent Practice Sessions
+              </h2>
+              <Link
+                href="/history"
+                className="text-xs font-semibold text-[var(--accent)] hover:underline flex items-center gap-1"
+              >
+                View all <ArrowRight className="h-3 w-3" />
+              </Link>
+            </div>
+
+            {recentSessions.length === 0 ? (
+              <div className="py-10 text-center flex flex-col items-center justify-center">
+                <div className="rounded-xl bg-[var(--bg-surface)] p-3 border border-[var(--border-subtle)] mb-3">
+                  <Clock className="h-6 w-6 text-[var(--text-muted)]" />
+                </div>
+                <p className="text-sm font-medium text-[var(--text-primary)]">
+                  No interview sessions yet
+                </p>
+                <p className="text-xs text-[var(--text-secondary)] mt-1 max-w-sm">
+                  Complete your first interview to track your response quality and answer progression.
+                </p>
+                <Link href="/interview" className="mt-4">
+                  <Button variant="primary" className="h-9 px-4 text-xs">
+                    Start Your First Interview
+                  </Button>
+                </Link>
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--border-subtle)]">
+                {recentSessions.map((session) => {
+                  const avgScore =
+                    session.scores.length > 0
+                      ? (
+                          session.scores.reduce((a, b) => a + b, 0) /
+                          session.scores.length
+                        ).toFixed(1)
+                      : null;
+
+                  return (
+                    <div
+                      key={session.sessionId}
+                      className="py-3.5 flex items-center justify-between hover:bg-[var(--bg-card-hover)] px-2 rounded-lg transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-lg bg-[var(--accent-subtle)] p-2 text-[var(--accent)]">
+                          <MessageSquare className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-[var(--text-primary)]">
+                            {session.role}
+                          </p>
+                          <p className="text-xs text-[var(--text-muted)]">
+                            {new Date(session.date).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4">
+                        {avgScore ? (
+                          <div className="text-right">
+                            <span className="text-xs font-semibold text-[var(--green)]">
+                              {avgScore} / 10
+                            </span>
+                            <p className="text-[10px] text-[var(--text-muted)]">Score</p>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-[var(--text-muted)]">In progress</span>
+                        )}
+                        <Link href="/history">
+                          <Button variant="ghost" className="h-8 px-2">
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </Button>
+                        </Link>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
-        <Link href="/progress" className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-indigo-500 px-4 py-2 text-[12px] font-semibold text-white hover:bg-indigo-400 transition-all">
-          View Progress <ArrowUpRight className="h-3 w-3" />
-        </Link>
+
+        {/* Right 1 Col: Skill Strength & 7-Day Coach Snapshot */}
+        <div className="flex flex-col gap-6">
+          {/* Skill Performance Widget */}
+          <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-card)] p-6 shadow-sm">
+            <h2 className="text-base font-semibold text-[var(--text-primary)] mb-1">
+              Skill Metrics
+            </h2>
+            <p className="text-xs text-[var(--text-secondary)] mb-4">
+              Real evaluation scores aggregated by role and domain.
+            </p>
+
+            {skillMetrics && skillMetrics.length > 0 ? (
+              <div className="space-y-3">
+                {skillMetrics.slice(0, 5).map((metric) => (
+                  <div key={metric.id}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="font-medium text-[var(--text-primary)]">
+                        {metric.skill_name}
+                      </span>
+                      <span className="font-semibold text-[var(--accent)]">
+                        {metric.score} / 10
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-[var(--bg-surface)] overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-[var(--accent)] transition-all duration-500"
+                        style={{ width: `${Math.min(100, (metric.score / 10) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-6 text-center text-xs text-[var(--text-muted)]">
+                Complete interview evaluations to generate granular skill benchmarks.
+              </div>
+            )}
+
+            <div className="mt-5 pt-4 border-t border-[var(--border-subtle)]">
+              <Link
+                href="/progress"
+                className="text-xs font-semibold text-[var(--accent)] hover:underline flex items-center justify-between"
+              >
+                <span>Full Skill Analytics & Radar</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+          </div>
+
+          {/* 7-Day Plan CTA Card */}
+          <div className="rounded-2xl border border-indigo-500/20 bg-gradient-to-b from-indigo-950/20 to-[var(--bg-card)] p-6 shadow-sm">
+            <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-wider mb-2">
+              <Target className="h-4 w-4" />
+              7-Day Improvement Plan
+            </div>
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+              Targeted Curriculum
+            </h3>
+            <p className="text-xs text-[var(--text-secondary)] mt-1.5 leading-relaxed">
+              Generate a personalized study roadmap targeting your diagnosed weak areas, complete with PDF and plain-text export.
+            </p>
+
+            <Link href="/progress" className="mt-4 block">
+              <Button variant="primary" className="w-full justify-center h-9 text-xs">
+                View & Generate Plan
+                <ArrowRight className="h-3.5 w-3.5 ml-1" />
+              </Button>
+            </Link>
+          </div>
+        </div>
       </div>
     </div>
   );

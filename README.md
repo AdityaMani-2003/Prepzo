@@ -1,178 +1,190 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Next.js-16-black?logo=next.js" alt="Next.js" />
+  <img src="https://img.shields.io/badge/Next.js-16.2-black?logo=next.js" alt="Next.js" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React" />
-  <img src="https://img.shields.io/badge/Supabase-Auth%20%2B%20DB-3ECF8E?logo=supabase" alt="Supabase" />
-  <img src="https://img.shields.io/badge/Gemini-AI-4285F4?logo=google" alt="Gemini AI" />
-  <img src="https://img.shields.io/badge/Tailwind%20CSS-4-06B6D4?logo=tailwindcss" alt="Tailwind CSS" />
+  <img src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Supabase-PostgreSQL%20%2B%20RLS-3ECF8E?logo=supabase" alt="Supabase" />
+  <img src="https://img.shields.io/badge/Google_Gemini-2.5_Flash-4285F4?logo=google" alt="Gemini AI" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-v4-06B6D4?logo=tailwindcss" alt="Tailwind CSS" />
 </p>
 
-# 🎯 Prepzo — AI Interview Preparation Platform
+# Prepzo — AI-Powered Technical Interview Preparation SaaS
 
-Prepzo is a production-grade AI-powered interview preparation SaaS that helps candidates ace their next technical interview. It generates contextual questions based on your resume, evaluates your answers in real-time, tracks your progress with an ELO rating system, and builds personalized improvement plans — all powered by Google's Gemini AI.
-
-> **[🔗 Live Demo → https://prepzo-one.vercel.app](https://prepzo-one.vercel.app)**
+Prepzo is a full-stack, production-grade technical interview preparation platform designed to bridge the gap between candidate project claims and real hiring expectations. Grounded in actual company hiring standards, Prepzo delivers structured mock rounds across **Coding & DSA**, **SQL & Database Queries**, **Core CS Fundamentals**, **Resume Defense**, and **System Design**.
 
 ---
 
-## ✨ Features
+## 🏛️ System Architecture
 
-| Feature | Description |
-|---------|-------------|
-| 🤖 **AI Mock Interviews** | Real-time question generation & answer evaluation with streaming AI responses |
-| 📄 **Resume Intelligence** | Upload your resume for AI-powered skill extraction and contextual interview questions |
-| 📊 **Performance Analytics** | ELO rating system, skill breakdowns, and trend analysis with interactive charts |
-| 📈 **7-Day Improvement Plan** | Personalized AI-generated study plans based on your weak areas |
-| ⬇️ **Download Plan** | Export your improvement plan as PDF or plain text |
-| 🗂️ **Interview History** | Browse and review all past interview sessions and evaluations |
-| 🎙️ **Voice Input** | Native speech recognition for hands-free interview practice |
-| 🔊 **AI Voice Feedback** | Text-to-speech dictation of AI evaluation results |
-| 🌗 **Theme Support** | Dark mode–first design with light mode toggle |
-| 🔐 **Secure Auth** | Google OAuth via Supabase with row-level security |
+```
+                               ┌───────────────────────────────────────────────────────────┐
+                               │                    Client Browser                         │
+                               │  (React 19, Tailwind CSS v4, Web Audio, SpeechRecognition) │
+                               └─────────────┬───────────────────────────────▲─────────────┘
+                                             │                               │
+                                             │ HTTPS / SSE Stream            │ Dynamic State
+                                             ▼                               │
+                               ┌─────────────────────────────────────────────┴─────────────┐
+                               │             Next.js 16 (App Router + Turbopack)           │
+                               │                                                           │
+                               │  ┌────────────────────┐   ┌─────────────────────────────┐ │
+                               │  │ proxy.ts           │   │ Server Actions & API Routes │ │
+                               │  │ (Auth Guard / SSR) │   │ (/api/stream-question,      │ │
+                               │  └─────────┬──────────┘   │  /api/evaluate,             │ │
+                               │            │              │  /api/improvement-plan)     │ │
+                               │            │              └──────────────┬──────────────┘ │
+                               └────────────┼─────────────────────────────┼────────────────┘
+                                            │                             │
+                                            ▼                             ▼
+                ┌──────────────────────────────────────┐     ┌────────────────────────────┐
+                │          Supabase Backend            │     │       Google Gemini        │
+                │  - PostgreSQL (Row-Level Security)   │     │  - 2.5 Flash SDK           │
+                │  - pgvector (Resume Embeddings)      │     │  - Real-Time Question Gen  │
+                │  - Auth (Google OAuth & SSR Cookies) │     │  - Evaluation & Solutions  │
+                └──────────────────────────────────────┘     └────────────────────────────┘
+```
 
 ---
 
-## 🛠️ Tech Stack
+## ⚡ Core Engineering Highlights
 
-| Layer | Technology |
-|-------|-----------|
-| **Framework** | Next.js 16 (App Router, Turbopack) |
-| **Language** | TypeScript |
-| **Frontend** | React 19, Tailwind CSS v4, Framer Motion |
-| **AI Engine** | Google Gemini 2.5 Flash (`@google/genai`) |
-| **Database** | Supabase (PostgreSQL + pgvector for RAG) |
-| **Auth** | Supabase Auth (Google OAuth) |
-| **Charts** | Recharts |
-| **PDF** | jsPDF (client-side generation), pdf-parse + Gemini OCR (server-side parsing) |
+### 1. Grounded Company Intelligence Engine
+Unlike generic chatbots that output unstructured scenario prompts, Prepzo features a dedicated company interview database (`lib/companyData.ts`) covering tier-specific hiring standards:
+* **FAANG / Big Tech (Google, Meta, Amazon)**: High algorithmic rigor, graph/tree traversals, time/space invariant checking, Leadership Principles (STAR format), and high-throughput system scaling.
+* **Top-Tier Fintech & Infrastructure (Stripe, Goldman Sachs)**: API idempotency, ACID transaction boundaries, analytical SQL window functions (`ROW_NUMBER`, `DENSE_RANK`), and concurrency safety.
+* **Enterprise & IT Services (TCS, Infosys, Wipro)**: Core computer science fundamentals (OOPs abstraction vs polymorphism, DBMS indexing, OS memory/process management, networking).
+* **High-Growth Startups**: Pragmatic full-stack decision-making, ORM N+1 query resolution, and multi-tenant schema tradeoffs.
+
+### 2. Multi-Track Interview Arenas
+Prepzo supports 7 dedicated interview tracks with role and seniority calibration:
+* **Coding & Algorithms (DSA)**: Concrete problems with explicit constraints, input/output samples, and an integrated **Code Mode** editor.
+* **SQL & Database Systems**: Practical business schemas, analytics objectives, and indexing queries.
+* **Core CS Fundamentals**: Operating systems, relational databases, networking protocols, and object-oriented design.
+* **Resume Project Defense**: Parses uploaded PDFs and challenges candidates to defend their architectural choices, caching layers, and bottlenecks.
+* **System Design & Distributed Systems**: Scalability, database sharding, and latency optimization.
+* **Behavioral & HR (STAR)**: Company-specific situational questions evaluating communication structure and ownership.
+
+### 3. Dimensional Scoring & Benchmark Solutions
+Evaluations provide objective analysis rather than generic praise:
+* **Dimensional Scorecards**: Discrete ratings (1–10) across **Clarity & Structure**, **Technical Depth & Accuracy**, and **Communication Delivery**.
+* **Optimal Benchmark Implementations**: Returns production-grade reference solutions (clean TypeScript, Python, or SQL) with step-by-step Big-O time and space complexity explanations.
+* **1-Click Solution Copy**: Quick-clipboard integration for candidate post-interview review.
+
+### 4. Adaptive 7-Day Curriculum & PDF Generation
+* **Diagnostic Synthesis**: Aggregates recurring weaknesses identified in evaluations and maps them to a structured daily schedule.
+* **Zero-Overlap PDF Engine**: Built with a custom jsPDF layout engine that dynamically calculates multi-line bounding boxes, stacks headers, and prints clean running `Page X of Y` footers with no text collision.
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer | Technology | Purpose |
+|:---|:---|:---|
+| **Frontend Framework** | **Next.js 16.2** (Turbopack, App Router) | SSR, hybrid client rendering, and optimal route streaming |
+| **UI Library** | **React 19** | Concurrent rendering, `useTransition`, and responsive state |
+| **Styling & Design System** | **Tailwind CSS v4** | Dark-mode native palette, glassmorphism tokens, zero runtime CSS |
+| **AI SDK** | **Google Gemini 2.5 Flash** (`@google/genai`) | High-speed structured inference, streaming SSE question delivery |
+| **Database & Auth** | **Supabase (PostgreSQL + RLS)** | Row-level security, user session cookies, resume parsing |
+| **Vector Engine** | **pgvector** | Cosine similarity embeddings for resume claim verification |
+| **Voice & Speech** | **Web Speech API** (`SpeechRecognition` & TTS) | Hands-free live voice interview experience |
+| **Document Generation** | **jsPDF** | Client-side export of 7-day preparation curricula |
+
+---
+
+## 🔒 Security & Data Isolation
+
+1. **Row-Level Security (RLS)**: Every database table (`resumes`, `interview_sessions`, `interview_messages`, `skill_metrics`) enforces PostgreSQL RLS policies matching `auth.uid() = user_id`.
+2. **Server-Side AI Secrets**: The `GEMINI_API_KEY` is strictly confined to server runtime environments (`lib/ai/gemini.ts` and API routes) and is never exposed in client bundles.
+3. **Session Cookie Integrity**: Next.js 16 SSR cookie proxy (`proxy.ts`) authenticates protected paths (`/dashboard`, `/interview`, `/resume`, `/progress`, `/history`, `/settings`) with zero flash of unauthenticated content.
+
+---
+
+## 📁 Repository Structure
+
+```
+prepzo/
+├── app/
+│   ├── (auth)/
+│   │   └── login/             # Google OAuth and email/password authentication
+│   ├── (dashboard)/
+│   │   ├── dashboard/         # Real-time metrics, recent sessions, and calibration
+│   │   ├── history/           # Searchable archive of past questions, answers, and evals
+│   │   ├── interview/         # 7-round interview arena, code editor, and scoring
+│   │   │   └── live/          # Hands-free voice interview mode
+│   │   ├── progress/          # ELO trajectory charts, radar breakdowns, and 7-day plan
+│   │   ├── resume/            # Resume parser, skill extraction, and claim audit
+│   │   ├── settings/          # Candidate profile, role calibration, and session controls
+│   │   └── layout.tsx         # Unified dashboard layout with top navigation & profile
+│   ├── api/                   # Server endpoints (stream-question, evaluate, improvement-plan)
+│   ├── auth/                  # OAuth callback & server-side signout handlers
+│   ├── globals.css            # Design tokens, custom layers, and input spacing utilities
+│   ├── layout.tsx             # Root HTML layout and metadata
+│   └── page.tsx               # Production landing page with session-aware navigation
+├── components/                # Reusable UI primitives (buttons, cards, plan generator)
+├── hooks/                     # Custom React hooks (useStreamAI, useVoice)
+├── lib/
+│   ├── companyData.ts         # Company hiring bars, topics, and verified question styles
+│   ├── supabaseClient.ts      # Browser-side Supabase client
+│   ├── supabaseServer.ts      # Server-side cookie-based Supabase client
+│   └── ai/gemini.ts           # Google Gemini 2.5 Flash SDK integration
+├── proxy.ts                   # Next.js 16 route protection and session proxy
+└── supabase/migrations/       # Production PostgreSQL schemas, RLS policies, and vector indexes
+```
 
 ---
 
 ## 🚀 Getting Started
 
-### Prerequisites
+### 1. Prerequisites
+* **Node.js** 18.x or later
+* **npm** 9.x or later
+* A [Supabase](https://supabase.com) project with PostgreSQL
+* A [Google AI Studio](https://aistudio.google.com) API Key (Gemini)
 
-- **Node.js** 18+ 
-- **npm** 9+
-- A [Supabase](https://supabase.com) project
-- A [Google AI Studio](https://aistudio.google.com) API key (Gemini)
-
-### Installation
+### 2. Clone and Install
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/prepzo.git
-cd prepzo
+git clone https://github.com/AdityaMani-2003/Prepzo.git
+cd Prepzo
 
 # Install dependencies
 npm install
+```
 
-# Set up environment variables
-cp .env.example .env.local
-# Edit .env.local with your actual keys (see section below)
+### 3. Configure Environment Variables
 
-# Run the development server
+Create `.env.local` in the project root:
+
+```env
+# Supabase Configuration
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
+# Google Gemini AI
+GEMINI_API_KEY=your-gemini-api-key
+```
+
+### 4. Run Development Server
+
+```bash
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
----
+### 5. Production Build & Verification
 
-## 🔐 Environment Variables
+```bash
+# Run TypeScript type check
+npx tsc --noEmit
 
-Create a `.env.local` file in the root directory:
-
-```env
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-
-# Google Gemini AI
-GEMINI_API_KEY=your_gemini_api_key
+# Compile production bundle with Turbopack
+npm run build
 ```
-
-| Variable | Scope | Description |
-|----------|-------|-------------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Client + Server | Your Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Client + Server | Supabase anonymous/public key |
-| `GEMINI_API_KEY` | Server only | Google Gemini API key (never exposed to browser) |
-
-> ⚠️ **Security**: `GEMINI_API_KEY` is **server-side only** and is never bundled into client code. All AI operations happen exclusively in API routes.
-
----
-
-## 📁 Project Structure
-
-```
-prepzo/
-├── app/
-│   ├── (dashboard)/        # Authenticated dashboard routes
-│   │   ├── dashboard/      # Main dashboard with stats & streak
-│   │   ├── interview/      # AI interview flow (text + voice)
-│   │   ├── progress/       # Analytics, charts & improvement plan
-│   │   ├── history/        # Past interview sessions
-│   │   ├── resume/         # Resume upload & AI analysis
-│   │   └── settings/       # User profile & preferences
-│   ├── api/                # Server-side API routes
-│   │   ├── evaluate/       # Answer evaluation endpoint
-│   │   ├── stream-question/# SSE streaming question generation
-│   │   ├── follow-up/      # Follow-up question generation
-│   │   ├── resume/         # Resume storage + RAG embedding
-│   │   ├── improvement-plan/ # AI improvement plan generation
-│   │   └── parse-resume/   # PDF parsing + Gemini OCR fallback
-│   ├── login/              # Authentication page
-│   └── page.tsx            # Landing page
-├── components/             # Reusable UI components
-├── hooks/                  # Custom React hooks (useVoice, useStreamAI)
-├── lib/                    # Supabase clients & Gemini AI wrapper
-├── services/               # AI service layer (prompts & parsing)
-├── utils/                  # Utility functions (parseAI, etc.)
-└── proxy.ts                # Auth middleware
-```
-
----
-
-## 📜 Available Scripts
-
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start development server (Turbopack) |
-| `npm run build` | Create production build |
-| `npm run start` | Start production server |
-| `npm run lint` | Run ESLint |
-
----
-
-## 🗄️ Database Setup
-
-Prepzo uses Supabase with the following tables:
-
-- **`resumes`** — Stores uploaded resume text per user
-- **`resume_embeddings`** — pgvector embeddings for RAG-based contextual interviews
-- **`interview_sessions`** — Interview session metadata
-- **`interview_messages`** — Questions, answers, and evaluation scores
-
-> All tables enforce **Row Level Security (RLS)** to ensure strict user data isolation.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
----
-
-<p align="center">
-  Built with ❤️ using Next.js, Supabase & Google Gemini
-</p>
+This project is licensed under the [MIT License](LICENSE).

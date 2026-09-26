@@ -1,43 +1,24 @@
-import { createServerClient } from "@supabase/ssr";
-import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { createClient } from "@/lib/supabaseServer";
+import { NextResponse, type NextRequest } from "next/server";
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
   const next = searchParams.get("next") ?? "/dashboard";
 
   if (code) {
-    const cookieStore = await cookies();
-
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll();
-          },
-          setAll(cookiesToSet) {
-            try {
-              cookiesToSet.forEach(({ name, value, options }) =>
-                cookieStore.set(name, value, options)
-              );
-            } catch {
-              // Ignore — cookie setting may fail in certain contexts
-            }
-          },
-        },
+    try {
+      const supabase = await createClient();
+      const { error } = await supabase.auth.exchangeCodeForSession(code);
+      if (!error) {
+        return NextResponse.redirect(`${origin}${next}`);
       }
-    );
-
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-
-    if (!error) {
-      return NextResponse.redirect(`${origin}${next}`);
+      console.error("[Auth Callback] Exchange error:", error.message);
+    } catch (err) {
+      console.error("[Auth Callback] Unexpected error:", err);
     }
   }
 
-  // If no code or error, redirect to login
-  return NextResponse.redirect(`${origin}/login`);
+  // Return user to login with error parameter if exchange fails
+  return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`);
 }
